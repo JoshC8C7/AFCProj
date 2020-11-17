@@ -1,0 +1,81 @@
+X   Source: http://clear.colorado.edu/compsem/documents/propbank_guidelines.pdf
+X   Basic components
+O   outside
+B-V verb
+
+X   Primary arguments
+B-ARG0  agent
+B-ARG1  patient
+B-ARG2  instrument/benefactive/attribute
+B-ARG3  starting point/benefactive/attribute
+B-ARG4  ending point
+B-ARG5  X
+
+B-ARGA  external e.g. causer The general (ArgA) marched the soldiers (Arg0) to the tents.
+
+X   Argument modifiers
+B-ARGM-ADJ  adjectival version of adv - The mayor’s [shocking] abuse of public funds outraged citizens.
+B-ARGM-ADV  adverbials - change event structure in a way not covered by others - She sang [happily].
+B-ARGM-CAU  clause - similar to purpose, 'because', 'due to' rather than 'in order to'
+B-ARGM-COM  comitatives - who an action was done with e.g. The man joined the club [with his friend.]
+B-ARGM-DIR  directional - show motion along a path e.g. the congressman snapped [back] that there had been enough votes.
+B-ARGM-DIS  discourse - markers connecting a sentence to preceding one e.g. The notification [also] clarifies the date.
+B-ARGM-DSP  direct speech - pointing to the speech delivered in the way described by the verb. Complicated.
+B-ARGM-EXT  extent - amount of change ocurring fron an action - e.g. the Senate then broadened the list [further] by...
+B-ARGM-GOL  goal - goal for action of the verb e.g. The child fed the cat [for her mother.], or for a destination.
+B-ARGM-LOC  locatives - where an action takes place. e.g. [In his ruling], Judge Curry added an additional fine.
+B-ARGM-LVB  light verb - labels light verbs e.g. 'take a walk', 'give a lecture'.
+B-ARGM-MNR  manner - how an action is performed e.g. Workers [mechanically] mixed the dry fibers. (vs e.g. chemically)
+B-ARGM-MOD  modals - 'will', 'may', 'can', 'must', 'would' etc
+B-ARGM-NEG  negation - 'not', 'n\'t', 'never', 'no longer'
+B-ARGM-PNC  X
+B-ARGM-PRD  secondary predicate - shows an adjunct of a predicate is capable of carrying some predicate structure.
+B-ARGM-PRP  purpose - motivation for an action, 'in order to', e.g. You can go to the park [for a fun afternoon].
+B-ARGM-PRR  X
+B-ARGM-PRX  X
+B-ARGM-REC  reciprocals - reflexives and reciprocals like 'himself'
+B-ARGM-TMP  temporal - when an action took place e.g. 'last week', 'sometimes', 'again', 'first' but not 'Never' (NEG)
+
+
+X   Continuations - see "Optimization of Natural Language Processing Components for Robustness and Scalability".
+B-C-ARG0
+B-C-ARG1
+B-C-ARG2
+B-C-ARG3
+B-C-ARG4
+
+B-C-ARGM-ADJ
+B-C-ARGM-ADV
+B-C-ARGM-CAU
+B-C-ARGM-COM
+B-C-ARGM-DIR
+B-C-ARGM-DIS
+B-C-ARGM-DSP
+B-C-ARGM-EXT
+B-C-ARGM-LOC
+B-C-ARGM-MNR
+B-C-ARGM-MOD
+B-C-ARGM-NEG
+B-C-ARGM-PRP
+B-C-ARGM-TMP
+
+B-R-ARG0
+B-R-ARG1
+B-R-ARG2
+B-R-ARG3
+B-R-ARG4
+B-R-ARG5
+
+B-R-ARGM-ADV
+B-R-ARGM-CAU
+B-R-ARGM-COM
+B-R-ARGM-DIR
+B-R-ARGM-EXT
+B-R-ARGM-GOL
+B-R-ARGM-LOC
+B-R-ARGM-MNR
+B-R-ARGM-MOD
+B-R-ARGM-PNC
+B-R-ARGM-PRD
+B-R-ARGM-PRP
+B-R-ARGM-TMP
