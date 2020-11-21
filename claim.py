@@ -1,3 +1,11 @@
+from graphviz import Digraph
+import matplotlib.pyplot as plt
+from pprint import pprint
+
+
+def argID(argV):
+    return (str(argV.start) +"X"+ str(argV.end)+argV.text)
+
 class TLClaim:
 
     def __init__(self, docIn,subclaims):
@@ -13,8 +21,29 @@ class TLClaim:
 
     #Takes subclaims and outputs graph relating their spans.
     def generateCG(self):
-        claimGraph = 1
-        return claimGraph
+        G = Digraph()
+        argSet= set()
+        verbSet = set()
+        for claim in self.subclaims:
+            root=claim.args['V']
+            G.node(argID(root), root.text)
+            for argK, argV in claim.args.items():
+                if argK != 'V':
+                    G.node(argID(argV),argV.text)
+                    G.edge(argID(argV),argID(root), label=argK)
+                    argSet.add(argV)
+                else:
+                    verbSet.add(argV)
+
+        for argV in verbSet:
+            for parent in argSet:
+                if argV.start >= parent.start and argV.end <= parent.end:
+                    G.edge(argID(argV),argID(parent),color='violet')
+
+
+        print(G.source)
+        self.printTL()
+        return
 
 class Claim:
     def __init__(self,docIn,args,uvi):
@@ -38,6 +67,8 @@ class Claim:
         print("ARGS: ", end='')
         for ik, iv in self.args.items():
             if ik != 'V':
-                print(ik,": ",iv,"//",iv.ents," ",end='')
-        print("")
+                print(ik,": ",iv.start,"->",iv.end,iv,"//",iv.ents,end='')
+                corefs= iv._.SCorefs
+                if corefs != iv: print(" // Corefs: ", iv._.SCorefs,"    ",end='')
+            print("")
         return
