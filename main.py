@@ -7,28 +7,16 @@ from spacy.tokens import Doc, Span
 from flair.data import Sentence
 from flair.models import SequenceTagger
 from nltk.corpus import propbank
-import xml
 from claim import TLClaim
 from claim import Claim
-
-
-#Method to handle coreferences
-#If there is a registered coreference (as set under doc._.corefs) then check if its within the current span/argument,
-#if there is one then return that (i.e. return 'Bob' rather than 'he'), otherwise just return the span
-def getCoref(span):
-    for corefK, corefV in span.doc._.DCorefs.items():
-        #is coref within span?
-        if corefK.start >= span.start and corefK.end <=span.end:
-            #Matching on the first found is sound as all matches (coref->antecedent) are injective.
-            if not any(tok.pos_ == "PRON" for tok in corefV):
-                return corefV
-    #No matches, so just return the span for onwards use.
-    return span
+from claim import getCorefs
+import nltk.sem
 
 def main():
+    os.environ["CORENLP_HOME"] = "~/stanza_corenlp"
     nlp=spacy.load('en_core_web_lg')
     Doc.set_extension("DCorefs",default={})
-    Span.set_extension("SCorefs",getter=getCoref)
+    Span.set_extension("SCorefs",getter=getCorefs)
 
     df=pd.read_table(os.path.join("data","Politihop","Politihop_train.tsv"),sep='\t')
     statementSet = set()
@@ -59,6 +47,7 @@ def main():
                     source=coref['top_spans'][index]
                     dest=coref['top_spans'][value]
                     corefSpans[doc[source[0]:source[1] + 1]] = doc[dest[0]:dest[1] + 1]
+        print(corefSpans)
         doc._.DCorefs=corefSpans
 
         frames={}
@@ -79,8 +68,10 @@ def main():
                         subclaims.append(newClaim)
 
         tlClaim = TLClaim(doc,subclaims)
-        tlClaim.generateCG()
-        #tlClaim.printTL()
+        tlClaim.generateCG(doc)
+        tlClaim.printTL()
+
+
 
 def tags2spans(tags,docIn):
     spans={}
