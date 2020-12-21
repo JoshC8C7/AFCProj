@@ -38,6 +38,9 @@ class TLClaim:
 
     def printTL(self):
         print("Text: ",self.doc.text)
+        if len(self.doc._.ConnectiveEdges) > 0:
+            print("Connectives:")
+            pprint(self.doc._.ConnectiveEdges)
         for sc in self.subclaims:
             sc.printCl()
         #[to_nltk_tree(sent.root).pretty_print() for sent in self.doc.sents]
