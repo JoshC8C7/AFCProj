@@ -77,21 +77,18 @@ class TLClaim:
 
             argV=edge.start
             argVe=edge.end
-            shortestSpan = doc[:]
             for parent in argSet:
-                if argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
-                    shortestSpan=parent
+                if argV.start >= parent.start and argV.end <= parent.end:
+                    G.edge(argID(argV),argID(parent),color='violet')
                 if argVe.start < parent.start and argVe.end > parent.end:
                     G.edge(argID(argVe), argID(parent), color='violet')
-            G.edge(argID(argV),argID(shortestSpan),color='violet')
+
 
 
         for argV in verbSet:
-            shortestSpan=doc[:]
             for parent in argSet:
-                if argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
-                    shortestSpan=parent
-            G.edge(argID(argV),argID(shortestSpan),color='violet')
+                if argV.start >= parent.start and argV.end <= parent.end:
+                    G.edge(argID(argV),argID(parent),color='violet')
 
 
         G.save(filename=(str(hash(self.doc))))
