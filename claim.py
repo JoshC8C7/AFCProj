@@ -49,7 +49,7 @@ class TLClaim:
     #Takes subclaims and outputs graph relating their spans.
     def generateCG(self,doc):
 
-        G = Digraph(format='pdf')
+        G = Digraph(strict=True,format='pdf')
         argSet= set()
         verbSet = set()
         for claim in self.subclaims:
@@ -67,6 +67,24 @@ class TLClaim:
 
                 else:
                     verbSet.add(argV)
+
+
+
+        for edge in doc._.ConnectiveEdges:
+            G.node(argID(edge.start),edge.start.text)
+            G.node(argID(edge.end),edge.end.text)
+            G.edge(argID(edge.start),argID(edge.end),color=edge.colours[edge.connType],label=edge.note)
+
+            argV=edge.start
+            argVe=edge.end
+            shortestSpan = doc[:]
+            for parent in argSet:
+                if argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
+                    shortestSpan=parent
+                if argVe.start < parent.start and argVe.end > parent.end:
+                    G.edge(argID(argVe), argID(parent), color='violet')
+            G.edge(argID(argV),argID(shortestSpan),color='violet')
+
 
         for argV in verbSet:
             shortestSpan=doc[:]
