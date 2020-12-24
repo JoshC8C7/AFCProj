@@ -45,7 +45,7 @@ def extractConnectives(doc):
 
     for tok in doc:
         # Edge #2 -> and
-        if tok.pos_ == "VERB" and tok.dep_ == "conj" and tok.head.pos_=="VERB":
+        if tok.pos_ == "VERB" and tok.dep_ == "conj" and tok.head.pos_=="VERB" and 'or' not in doc[min(tok.i,tok.head.i):max(tok.i,tok.head.i)+1].text:
             print("NEW EDGE: ", tok, "--and-->", tok.head)
             edges.append(Connective('AND',Span(doc,tok.i,tok.i+1),Span(doc,tok.head.i,tok.head.i+1),'AND-E2'))
             if not any(child.dep_ in subjects for child in tok.children):

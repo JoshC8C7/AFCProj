@@ -31,7 +31,8 @@ def main():
         if s.split(" ")[0].lower() == "says":
             s=(s.partition(" "))[1]
         s.replace('&amp;','and')
-        statementSet.add(s)
+        if False or 'TV' in s:
+            statementSet.add(s)
 
     predictorOIE = Predictor.from_path(
         "https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz")
@@ -74,8 +75,7 @@ def main():
                         subclaims.append(newClaim)
 
         tlClaim = TLClaim(doc,subclaims)
-        tlClaim.generateCG(doc)
-        tlClaim.printTL()
+        #tlClaim.printTL()
 
 
 

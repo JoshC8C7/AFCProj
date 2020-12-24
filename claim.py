@@ -2,13 +2,15 @@ from graphviz import Digraph
 import matplotlib.pyplot as plt
 from pprint import pprint
 from graphviz import Source
+import networkx as nx
 import nltk
+from pydot import graph_from_dot_data
 
 def argID(argV):
     return (str(argV.start) +"X"+ str(argV.end)+argV.text)
 
 def getEdgeStyle(label):
-    if label in []:
+    if label in ['ARGM-ADV','ARGM-MOD']:
         return 'dotted'
     else:
         return 'solid'
@@ -28,12 +30,15 @@ def getCorefs(span):
 
 class TLClaim:
 
-    def __init__(self, docIn,subclaims):
+    def __init__(self, docIn,OIEsubclaims):
         self.doc = docIn
 
-        # List of all claims made within.
-        self.subclaims = subclaims
+        # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
+        #To convert, need to form the abstract meaning representation graph:
+        self.graph = self.generateCG(OIEsubclaims, True)
 
+        #...then extract the subclaims from the graph.
+        self.subclaims = self.extractSubclaims()
 
 
     def printTL(self):
@@ -47,53 +52,122 @@ class TLClaim:
         print("/////////////////////////////////////////////////////////////")
 
     #Takes subclaims and outputs graph relating their spans.
-    def generateCG(self,doc):
-
+    def generateCG(self,OIEsubclaims,output):
+        doc=self.doc
         G = Digraph(strict=True,format='pdf')
         argSet= set()
         verbSet = set()
-        for claim in self.subclaims:
+        corefNodes = []
+        corefEdges = []
+        G.node(argID(doc[:]), doc.text)
+        for claim in OIEsubclaims:
             root=claim.args['V']
             G.node(argID(root), root.text)
+            print(root.text)
             for argK, argV in claim.args.items():
                 if argK != 'V':
                     G.node(argID(argV), argV.text + "/" + str(argV.ents))
+                    print(argV.text)
                     G.edge(argID(argV), argID(root), label=argK, style=getEdgeStyle(argK))
                     argSet.add(argV)  # argV = arg value, not verb.
-                    for coref in argV._.SCorefs:
-                        if coref[1] != argV:
-                            G.node(argID(coref[1]), coref[1].text + "/" + str(coref[1].ents))
-                            G.edge(argID(argV), argID(coref[1]), color='green', label=coref[0].text)
+
+                    # Store the coref edges for adding to the print graph only. If these are left on the networkx
+                    #graphs then they interfere with splitting into subclaims as the edges becomes bridges. The
+                    #coreferences themselves are not lost as they're properties of the doc/spans. They are useful for
+                    #illustratory and debugging purposes, and so can be output when requested with output=True
+                    #This is deemed sound to omit from the networkx graph as a coreference does not result in two claims
+                    #being co-dependent e.g. 'My son is 11. He likes to eat cake.' - the coreference bridges the two
+                    #otherwise separate components when there should be no co-dependence implied.
+
+                    if output:
+                        for coref in argV._.SCorefs:
+                            if coref[1] != argV:
+                                corefNodes.append((argID(coref[1]), coref[1].text + "/" + str(coref[1].ents)))
+                                corefEdges.append((argID(argV), argID(coref[1]), coref[0].text))
 
                 else:
                     verbSet.add(argV)
-
-
 
         for edge in doc._.ConnectiveEdges:
             G.node(argID(edge.start),edge.start.text)
             G.node(argID(edge.end),edge.end.text)
             G.edge(argID(edge.start),argID(edge.end),color=edge.colours[edge.connType],label=edge.note)
 
-            argV=edge.start
-            argVe=edge.end
-            for parent in argSet:
-                if argV.start >= parent.start and argV.end <= parent.end:
-                    G.edge(argID(argV),argID(parent),color='violet')
-                if argVe.start < parent.start and argVe.end > parent.end:
-                    G.edge(argID(argVe), argID(parent), color='violet')
+            if edge.connType == 'IF':
+                argSet.add(edge.start)
+                argSet.add(edge.end)
+                verbSet.add(edge.end)
 
-
+            elif edge.connType == 'OR':
+                verbSet.add(edge.start)
+                verbSet.add(edge.end)
 
         for argV in verbSet:
+            shortestSpan=doc[:]
             for parent in argSet:
-                if argV.start >= parent.start and argV.end <= parent.end:
-                    G.edge(argID(argV),argID(parent),color='violet')
+                if argV != parent and argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
+                    shortestSpan=parent
+            G.node(argID(shortestSpan),shortestSpan.text)
+            G.edge(argID(argV),argID(shortestSpan),color='violet')
+
+        #If visual output requested, then add coref edges determined earlier to a copy of the graph and return that.
+        #The returned graph is identical except for nodes created solely as coreference components and the green edges.
+
+        if output:
+            H = G.copy()
+            for node in corefNodes:
+                H.node(node[0],node[1])
+            for edge in corefEdges:
+                H.edge(edge[0],edge[1],color='green',label=edge[2])
+            H.save(filename=(str(hash(self.doc))))
 
 
-        G.save(filename=(str(hash(self.doc))))
-        self.printTL()
-        return
+        return G
+
+
+    def extractSubclaims(self):
+        G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
+
+        #Cycles are rare in the data but can still crop up, but rarely enough that checking every graph for cycles
+        #if a waste of computation. Instead, catch networkx finding a cycle/raising HasACycle and then remove an edge
+        #from the offending loop before retrying. todo check if this is actually quicker
+
+        # Do networkx things
+        # Base of the doc:
+        subtreeRoots = G.in_edges(nbunch=argID(self.doc[:]), data='label') #Store the subclaim graph roots
+        H = nx.subgraph_view(G, filter_node=(lambda n: n != argID(self.doc[:]))) #Create a view without the overall text/main root.
+
+        # Create the subclaim graphs - once detaching the whole-text root these are connected components
+        subtrees = [H.subgraph(c).copy() for c in nx.weakly_connected_components(H)]
+        nx.drawing.nx_pydot.write_dot(subtrees[0], 'fishfish')
+
+        """
+        cycling = True
+        while cycling:
+            try:
+                #Do networkx things
+                #Base of the doc:
+                subtrees = G.in_edges(nbunch=argID(self.doc[:]),data='label')
+                subclaims = []
+                for x in G.nbunch_iter(nbunch=subtrees):
+                    newNodes = G.nodes.copy()
+                    newNodes.remove(x[0])
+                    print(newNodes)
+                    subclaims.append(G.subgraph(newNodes))
+                for count, p in enumerate(subclaims):
+                    nx.drawing.nx_pydot.write_dot(p, count)
+                    print("count ",count)
+
+            except HasACycle:
+                G.remove_edge(nx.algorithms.cycles.find_cycle(G)[-1])
+
+            except:
+                print('things have broken')
+            else:
+                cycling = False"""
+
+
+        return None
 
 class Claim:
     def __init__(self,docIn,args,uvi):
