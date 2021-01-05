@@ -5,9 +5,10 @@ from graphviz import Source
 import networkx as nx
 import nltk
 from pydot import graph_from_dot_data
+from logic import KnowledgeBase
 
 def argID(argV):
-    return (str(argV.start) +"X"+ str(argV.end)+argV.text)
+    return (str(argV.start) +"X"+ str(argV.end)+argV.text.replace("\"",""))
 
 def getEdgeStyle(label):
     if label in ['ARGM-ADV','ARGM-MOD']:
@@ -30,8 +31,9 @@ def getCorefs(span):
 
 class TLClaim:
 
-    def __init__(self, docIn,OIEsubclaims):
+    def __init__(self, docIn,OIEsubclaims,uvis):
         self.doc = docIn
+        self.uvis = uvis
 
         # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
         #To convert, need to form the abstract meaning representation graph:
@@ -39,6 +41,8 @@ class TLClaim:
 
         #...then extract the subclaims from the graph.
         self.subclaims = self.extractSubclaims()
+        #for x in self.subclaims:
+            #x.ClaimPrint()
 
 
     def printTL(self):
@@ -47,12 +51,11 @@ class TLClaim:
             print("Connectives:")
             pprint(self.doc._.ConnectiveEdges)
         for sc in self.subclaims:
-            sc.printCl()
-        #[to_nltk_tree(sent.root).pretty_print() for sent in self.doc.sents]
+            sc.ClaimPrint()
         print("/////////////////////////////////////////////////////////////")
 
     #Takes subclaims and outputs graph relating their spans.
-    def generateCG(self,OIEsubclaims,output):
+    def generateCG(self,OIEsubclaims,output=False):
         doc=self.doc
         G = Digraph(strict=True,format='pdf')
         argSet= set()
@@ -61,14 +64,13 @@ class TLClaim:
         corefEdges = []
         G.node(argID(doc[:]), doc.text)
         for claim in OIEsubclaims:
-            root=claim.args['V']
-            G.node(argID(root), root.text)
-            print(root.text)
-            for argK, argV in claim.args.items():
+            root=claim['V']
+            G.node(argID(root), root.text+'/'+self.uvis.get(argID(root),'No UVI found'))
+            for argK, argV in claim.items():
                 if argK != 'V':
                     G.node(argID(argV), argV.text + "/" + str(argV.ents))
-                    print(argV.text)
-                    G.edge(argID(argV), argID(root), label=argK, style=getEdgeStyle(argK))
+                    G.edge(argID(argV), argID(root), label=argK.replace('-','x'), style=getEdgeStyle(argK))
+                    # Replace any '-' with 'x' as '-' is a keyword for networkx, but is output by allennlp
                     argSet.add(argV)  # argV = arg value, not verb.
 
                     # Store the coref edges for adding to the print graph only. If these are left on the networkx
@@ -91,7 +93,7 @@ class TLClaim:
         for edge in doc._.ConnectiveEdges:
             G.node(argID(edge.start),edge.start.text)
             G.node(argID(edge.end),edge.end.text)
-            G.edge(argID(edge.start),argID(edge.end),color=edge.colours[edge.connType],label=edge.note)
+            G.edge(argID(edge.start),argID(edge.end),color=edge.colours[edge.connType],label=edge.connType)
 
             if edge.connType == 'IF':
                 argSet.add(edge.start)
@@ -127,74 +129,57 @@ class TLClaim:
 
     def extractSubclaims(self):
         G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
-
+        claimsList = []
+        subtrees = []
         #Cycles are rare in the data but can still crop up, but rarely enough that checking every graph for cycles
         #if a waste of computation. Instead, catch networkx finding a cycle/raising HasACycle and then remove an edge
         #from the offending loop before retrying. todo check if this is actually quicker
 
         # Do networkx things
         # Base of the doc:
-        subtreeRoots = G.in_edges(nbunch=argID(self.doc[:]), data='label') #Store the subclaim graph roots
+        subtreeRoots = list(p[0] for p in G.in_edges(nbunch=argID(self.doc[:]))) #Store the subclaim graph roots
         H = nx.subgraph_view(G, filter_node=(lambda n: n != argID(self.doc[:]))) #Create a view without the overall text/main root.
 
-        # Create the subclaim graphs - once detaching the whole-text root these are connected components
-        subtrees = [H.subgraph(c).copy() for c in nx.weakly_connected_components(H)]
-        nx.drawing.nx_pydot.write_dot(subtrees[0], 'fishfish')
-
-        """
         cycling = True
         while cycling:
             try:
-                #Do networkx things
-                #Base of the doc:
-                subtrees = G.in_edges(nbunch=argID(self.doc[:]),data='label')
-                subclaims = []
-                for x in G.nbunch_iter(nbunch=subtrees):
-                    newNodes = G.nodes.copy()
-                    newNodes.remove(x[0])
-                    print(newNodes)
-                    subclaims.append(G.subgraph(newNodes))
-                for count, p in enumerate(subclaims):
-                    nx.drawing.nx_pydot.write_dot(p, count)
-                    print("count ",count)
-
-            except HasACycle:
+                # Create the subclaim graphs - once detaching the whole-text root these are connected components
+                subtrees = [H.subgraph(c).copy() for c in nx.weakly_connected_components(H)]
+                if len(subtrees) > 0:
+                    nx.drawing.nx_pydot.write_dot(subtrees[0], 'fish2')
+            except nx.HasACycle:
                 G.remove_edge(nx.algorithms.cycles.find_cycle(G)[-1])
-
             except:
                 print('things have broken')
+                break
             else:
-                cycling = False"""
+                cycling = False
+        for sc in subtrees:
+            newuvis = {}
+            relRoots = list(filter(lambda x: x in sc, subtreeRoots))
+            for node in sc:
+                if node in self.uvis:
+                    newuvis[node] = self.uvis[node]
+            claimsList.append(Claim(self.doc, sc, relRoots, newuvis))
 
-
-        return None
+        return claimsList
 
 class Claim:
-    def __init__(self,docIn,args,uvi):
+    def __init__(self,docIn,graph,roots,uvi):
         #Claim has Verb and a range of arguments.
         #Also a UVI resolution, and any entities found within.
 
         self.doc=docIn #spacy Doc - just points to parent TLClaim's doc.
+        self.uvis=uvi
+        self.graph = graph
+        self.roots=roots
+        self.kb = KnowledgeBase(self.graph, self.roots)
 
-        #All spacy spans pointing to the portion in question.
-        self.args=args
 
-        #Resolved UVI type - tuple of (Span in question, UVI value)
-        self.uvi = uvi
+        return
 
-    def resolveUvi(self):
-        #take self.doc and resolve to find a uvi for the verb self.v.
-        return None
-
-    def printCl(self):
-        print("VERB: ", self.uvi[0], " -> ", self.uvi[1])
-        print("ARGS: ", end='')
-        for ik, iv in self.args.items():
-            if ik != 'V':
-                print(ik,": ",iv.start,"->",iv.end,iv,"//",iv.ents,end='')
-                corefs= iv._.SCorefs
-                if corefs != []:
-                    print(" // Corefs: ",corefs,"    ",type(corefs[0][0]),end='')
-
-            print("")
+    def ClaimPrint(self):
+        print(self.uvis)
+        print(self.roots)
+        nx.drawing.nx_pydot.write_dot(self.graph, 'fishx')
         return

@@ -8,8 +8,8 @@ from flair.data import Sentence
 from flair.models import SequenceTagger
 from nltk.corpus import propbank
 from claim import TLClaim
-from claim import Claim
 from claim import getCorefs
+from claim import argID
 import nltk.sem
 from spacy import displacy
 import connectives as con
@@ -31,7 +31,7 @@ def main():
         if s.split(" ")[0].lower() == "says":
             s=(s.partition(" "))[1]
         s.replace('&amp;','and')
-        if False or 'TV' in s:
+        if False or 'FBI' in s:
             statementSet.add(s)
 
     predictorOIE = Predictor.from_path(
@@ -54,7 +54,7 @@ def main():
                     source=coref['top_spans'][index]
                     dest=coref['top_spans'][value]
                     corefSpans[doc[source[0]:source[1] + 1]] = doc[dest[0]:dest[1] + 1]
-        print(corefSpans)
+        #print(corefSpans)
         doc._.DCorefs=corefSpans
 
         frames={}
@@ -64,17 +64,18 @@ def main():
             frames[newSpan] = e['labels'][0].value
 
 
-        subclaims = []
+        oieSubclaims = []
+        uviDict = {}
         for e in oie['verbs']:
             oiespans = tags2spans(e['tags'],doc)
+            oieSubclaims.append(oiespans)
             for key,val in oiespans.items():
                 if key == 'V':
                     uvi = frames.get(val,None)
                     if uvi is not None:
-                        newClaim = Claim(doc, oiespans, (val,uvi))
-                        subclaims.append(newClaim)
+                        uviDict[argID(val)] = uvi
 
-        tlClaim = TLClaim(doc,subclaims)
+        tlClaim = TLClaim(doc,oieSubclaims,uviDict)
         #tlClaim.printTL()
 
 

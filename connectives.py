@@ -41,7 +41,7 @@ def extractConnectives(doc):
                 parent = parent.head
             if parent.head.pos_ == "VERB":
                 print(" NEW EDGE: ", nc.root, "-ARG0>", parent.head)
-                edges.append(Connective('ARG0',nc,Span(doc,parent.head.i,parent.head.i+1),'ARG0-E1'))
+                edges.append(Connective('ARG0',nc,Span(doc,parent.head.i,parent.head.i+1),'ARG0xE1'))
 
     for tok in doc:
         # Edge #2 -> and
@@ -52,7 +52,7 @@ def extractConnectives(doc):
                 for pchild in tok.head.children:
                     if pchild != tok and pchild.dep_ in subjects:
                         print("ADOPT SUBJ", pchild, "-ARG0->", tok)
-                        edges.append(Connective('ARG0',Span(doc,pchild.i,pchild.i+1),Span(doc,tok.i,tok.i+1),'ARG0-E2/ADOPT SUBJ'))
+                        edges.append(Connective('ARG0',Span(doc,pchild.i,pchild.i+1),Span(doc,tok.i,tok.i+1),'ARG0xE2xADOPTxSUBJ'))
 
         #Edge #3 -> if
         if tok.lower_ == 'if' and tok.head.pos_ in ["VERB","AUX"]:
@@ -64,7 +64,7 @@ def extractConnectives(doc):
                 print("NEW EDGE: ", "IF: ", condition, "THEN:",effect)
                 print(Span(doc,condition[0].i,condition[-1].i+1))
                 print(Span(doc,effect[0].i,effect[-1].i+1))
-                edges.append(Connective('IF',Span(doc,condition[0].i,condition[-1].i+1),Span(doc,effect[0].i,effect[-1].i+1),'IF source THEN dest-E3'))
+                edges.append(Connective('IF',Span(doc,condition[0].i,condition[-1].i+1),Span(doc,effect[0].i,effect[-1].i+1),'IFxsourcexTHENxdestxE3'))
 
 
         #Edge #4 -> or
@@ -72,7 +72,7 @@ def extractConnectives(doc):
             for child in tok.head.children:
                 if child.dep_ == 'conj':
                     print("NEW EDGE", tok.head, '-or->', child)
-                    edges.append(Connective('OR',Span(doc,tok.head.i,tok.head.i+1),Span(doc,child.i,child.i+1),'OR-E4'))
+                    edges.append(Connective('OR',Span(doc,tok.head.i,tok.head.i+1),Span(doc,child.i,child.i+1),'ORxE4'))
                     break
 
     """svg = displacy.render(doc, style="dep")
