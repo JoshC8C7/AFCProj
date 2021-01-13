@@ -74,7 +74,7 @@ class TLClaim:
             check = ''.join(filter(str.isalnum, str(root))).replace(' ', '')
             if check =="": #Sometimes some nonsense can be attributed as a verb by oie.
                 continue
-            G.node(self.argID(root), root.text + '/' + self.uvis.get(self.argID(root), 'No UVI found'))
+            G.node(self.argID(root), root.text + '/' + self.uvis.get(root, 'No UVI found'))
             for argK, argV in claim.items():
                 if argK != 'V':
                     G.node(self.argID(argV), argV.text + "/" + str(argV.ents))
@@ -171,13 +171,14 @@ class TLClaim:
             newuvis = {}
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
             for node in sc:
-                if node in self.uvis:
-                    newuvis[node] = self.uvis[node]
+                if self.argBase[node] in self.uvis:
+                    newuvis[node] = self.uvis[self.argBase[node]]
             removedEdges=[]
             for j in relRoots:
                 for i in sc.out_edges(j):
                     removedEdges.append((i[0],i[1]))
             sc.remove_edges_from(removedEdges)
+            print("UVIS: ", newuvis)
             claimsList.append(Claim(self.doc, sc, relRoots, newuvis,self.argBase))
 
         return claimsList
@@ -192,7 +193,7 @@ class Claim:
         self.graph = graph
         self.roots=roots
         self.argBase = argBase
-        self.kb = KnowledgeBase(self.graph, self.roots,self.argBase)
+        self.kb = KnowledgeBase(self.graph, self.roots,self.argBase, self.uvis)
 
 
         return

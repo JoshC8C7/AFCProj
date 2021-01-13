@@ -73,9 +73,7 @@ def extractConnectives(doc):
                     edges.append(Connective('OR',Span(doc,tok.head.i,tok.head.i+1),Span(doc,child.i,child.i+1),'ORxE4'))
                     break
 
-    """svg = displacy.render(doc, style="dep")
-    output_path = Path(tok.head.text + ".svg")
-    output_path.open("w", encoding="utf-8").write(svg)"""
+
     doc._.ConnectiveEdges = edges
     return doc
 

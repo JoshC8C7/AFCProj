@@ -8,11 +8,12 @@ class KnowledgeBase():
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
     other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
 
-    def __init__(self, claimIn, roots,argBase):
+    def __init__(self, claimIn, roots,argBase,uvis):
         self.claimG = claimIn
         self.roots = roots
         self.argBase = argBase
         self.kb = []
+        self.uvis = uvis
         self.freeVariableCounter = 0
 
 
@@ -34,7 +35,9 @@ class KnowledgeBase():
         #Retrieve spaCy Span from encoded graph node
         argSpan = self.argBase[arg]
 
-        if len(argSpan._.SCorefs) > 0:
+        #todo not entirely sure if this is needed? The coreferences don't need to be part of the KB if they're
+        #checked on the logic before being sent to the kb?
+        if len(argSpan._.SCorefs) > 0 and arg not in self.uvis: #Exclude verbs from coreferences.
             # push in coreferences if they exist
             tokMap = {}
             for coref in argSpan._.SCorefs:
@@ -141,7 +144,7 @@ class KnowledgeBase():
         return predicate
 
 
-
+#Side-entry method to test nltk's proof systems.
 if __name__ == '__main__':
     print("main")
     ns = expr.fromstring('launch(t,u) & make(x,y) -> Root')
@@ -181,5 +184,3 @@ if __name__ == '__main__':
     kb.append(expr.fromstring('a -> True'))
     c = expr.fromstring('b')
     print(ResolutionProverCommand(c, kb).prove(verbose=True))"""
-
-
