@@ -1,9 +1,5 @@
-import nltk.sem
 from nltk.sem import Expression as expr
-import networkx as nx
-import claim
 from nltk.inference.resolution import *
-from nltk.sem import logic
 import string
 
 class KnowledgeBase():
@@ -12,14 +8,54 @@ class KnowledgeBase():
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
     other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
 
-    def __init__(self, claimIn, roots):
+    def __init__(self, claimIn, roots,argBase):
         self.claimG = claimIn
         self.roots = roots
+        self.argBase = argBase
         self.kb = []
         self.freeVariableCounter = 0
 
 
         self.graph2rules()
+
+    def modOrCore(self,edge):
+        if edge[2].get('label','') in self.core:
+            return 'core'
+        if len(self.claimG.in_edges(nbunch=edge[0])) > 0:
+            return 'core'
+        if edge[2].get('label','SKIP') not in self.core + self.other:
+            return 'mod'
+        else:
+            return 'other'
+
+    #Sanitizes string for rule instantiation, converting from graph-arg to KB-arg
+    def formatArg(self,arg):
+
+        #Retrieve spaCy Span from encoded graph node
+        argSpan = self.argBase[arg]
+
+        if len(argSpan._.SCorefs) > 0:
+            # push in coreferences if they exist
+            tokMap = {}
+            for coref in argSpan._.SCorefs:
+                for tok in argSpan:
+                    if tok.i == coref[0].start:
+                        tokMap[tok] = ''.join(x.text for x in coref[1])
+                    elif tok.i in range(coref[0].start,coref[0].end):
+                        tokMap[tok] = ''
+            newArgStr = ''
+            for tok in argSpan:
+                if tok in tokMap:
+                    newArgStr += tokMap[tok]
+                else:
+                    newArgStr += tok.text
+            #as retval is just a string here, have to generate its KB-arg manually.
+            retVal = (str(argSpan.start) + "X" + str(argSpan.end) + newArgStr.replace("\"", ""))
+        else:
+            retVal = arg
+
+        retVal = ''.join(filter(str.isalnum, str(retVal))).replace(' ', '')
+        return 'k' + retVal
 
 
     def getFreeVar(self):
@@ -29,15 +65,13 @@ class KnowledgeBase():
         return retVal
 
     def addToKb(self,text):
-        print("adding to KB: ", text)
         self.kb.append(expr.fromstring(text))
+        print("adding to kb ",text)
         return
 
-    def formatArg(self,arg):
-        retVal = ''.join(filter(str.isalnum, str(arg))).replace(' ', '')
-        return retVal
 
     def graph2rules(self):
+        seen = set()
         #Starting at 'root' verb(s), it being fulfilled means it implies argF(root) - conjuncted with any other root verbs in the subgraph. 'make(IG_report, clear_that) -> argF(root)'
         #To check if its fulfilled, check all in-edges.
         #1. The edge is to a simple arg leaf - it then becomes part of the parent verb i.e. sells(Tesco,____)
@@ -47,36 +81,39 @@ class KnowledgeBase():
         #When determining what to term, post to the coref checker to sub in any required coreferences.
         #FOR MODIFIERS - form a new term wrapping the verb in them e.g. starting with launch(fbi, investigation) if it happened on tuesday, we add '& when(launch(fbi,investigation), tuesday))'
         #todo cyan and red nodes?
-        print("PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP")
-        rootImpl = self.conjEstablish(self.roots) + ' -> argF(root)'
+        if len(self.roots) ==0:
+            print("No roots")
+            return
+        rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
-        print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
+        #pprint(self.kb)
         return
 
-    def conjEstablish(self,rootsIn):
-        return " & ".join(list(self.establishRule(x) for x in rootsIn))
+    def conjEstablish(self,rootsIn,seen):
+        filteredRoots=(y for y in rootsIn if len(self.claimG.in_edges(nbunch=y)) > 0)
+        return " & ".join(list((self.establishRule(x,seen) for x in filteredRoots)))
 
-    def establishRule(self,root):
+    def establishRule(self,root,seen):
+        seen.add(root)
         argList = []
         modifiers = []
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
             #print("EDGE",edge)
             #Find the core args to create the predicate
-            if edge[2].get('style','') != 'dotted' and edge[2].get('label','') in self.core:
+            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'core':
                 #Add the sanitised (for hashing purposes) argument at the end of the edge
                 argList.append(self.formatArg(edge[0]))
-        #todo arglist is empty?
         #Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
-        predicate = str(root) + '(' + ','.join(argList) + ')'
+        predicate = self.formatArg(root) + '(' + ','.join(argList) + ')'
 
         #Now check for any non-leaf entries or modifiers
         count=0
         for edge in incomingEdges:
 
             # it isn't a leaf argument
-            if edge[2].get('style','') != 'dotted' and len(self.claimG.in_edges(nbunch=edge[0])) > 0:
-                upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))))
+            if edge[2].get('style','') != 'dotted' and len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
+                upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)
 
                 #Fill in all bar the (count)th arguments with free variables:
                 miniArgList = []
@@ -86,13 +123,13 @@ class KnowledgeBase():
                         miniArgList.append(self.formatArg(edge[0]))
                     else:
                         miniArgList.append(freeVar + str(i))
-                impliedArg = str(root) + '(' + ",".join(miniArgList)+")"
+                impliedArg = self.formatArg(root) + '(' + ",".join(miniArgList)+")"
                 self.addToKb(upVal + ' -> ' + impliedArg)
 
             # Else if it's a modifier
-            elif edge[2].get('style','') != 'dotted' and edge[2].get('label','SKIP') not in self.core + self.other:
+            elif edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'mod':
                 #print("MODIFIER ", edge[2]['label']+'('+predicate+','+str(edge[0])+')')
-                modifiers.append(edge[2]['label']+'('+predicate+','+str(edge[0])+')')
+                modifiers.append(edge[2]['label']+'('+predicate+','+self.formatArg(edge[0])+')')
             #else its a leaf, so just continue without adding any extra rules or modifier
 
             #Increase the count as we move to the count-th argument

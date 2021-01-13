@@ -1,21 +1,19 @@
 from allennlp.predictors.predictor import Predictor
-from pprint import pprint
 import pandas as pd
 import os
 import spacy
 from spacy.tokens import Doc, Span
 from flair.data import Sentence
 from flair.models import SequenceTagger
-from nltk.corpus import propbank
-from claim import TLClaim
-from claim import getCorefs
-from claim import argID
-import nltk.sem
+from claim import TLClaim, getCorefs, argIDGen
 from spacy import displacy
 import connectives as con
+import pathlib
+
 
 def main():
-    os.environ["CORENLP_HOME"] = "~/stanza_corenlp"
+    #spacy.require_gpu()
+    pathlib.PosixPath = pathlib.WindowsPath #Small hack to handle AllenNLP & Flair not being compatible with windows
     nlp=spacy.load('en_core_web_lg')
     Doc.set_extension("DCorefs",default={})
     Doc.set_extension("ConnectiveEdges", default=[])
@@ -31,7 +29,7 @@ def main():
         if s.split(" ")[0].lower() == "says":
             s=(s.partition(" "))[1]
         s.replace('&amp;','and')
-        if False or 'FBI' in s:
+        if (True or 'safely' in s) and any(x !=" " for x in s):
             statementSet.add(s)
 
     predictorOIE = Predictor.from_path(
@@ -54,7 +52,9 @@ def main():
                     source=coref['top_spans'][index]
                     dest=coref['top_spans'][value]
                     corefSpans[doc[source[0]:source[1] + 1]] = doc[dest[0]:dest[1] + 1]
-        #print(corefSpans)
+        """for ik,iv in corefSpans.items():
+            print(ik.start, ik.text, iv.text)
+        print(corefSpans)"""
         doc._.DCorefs=corefSpans
 
         frames={}
@@ -68,16 +68,18 @@ def main():
         uviDict = {}
         for e in oie['verbs']:
             oiespans = tags2spans(e['tags'],doc)
+            if len(oiespans) < 2 or 'V' not in oiespans or all(x not in oiespans for x in ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']) > 0:
+                print("axing ",oiespans)
+                continue
             oieSubclaims.append(oiespans)
             for key,val in oiespans.items():
                 if key == 'V':
                     uvi = frames.get(val,None)
                     if uvi is not None:
-                        uviDict[argID(val)] = uvi
+                        uviDict[argIDGen(val)] = uvi
 
         tlClaim = TLClaim(doc,oieSubclaims,uviDict)
         #tlClaim.printTL()
-
 
 
 def tags2spans(tags,docIn):
@@ -96,8 +98,37 @@ def tags2spans(tags,docIn):
             # Open new entry and set start index accordingly.
             start = index
             open = True
+    pre = spans.copy()
+
+    for spanK, span in spans.items():
+        if docIn[span.start].ent_iob_ == 'I':
+            i=span.start-1
+            while docIn[i].ent_iob_ != 'B':
+                i-=1
+            spans[spanK] = docIn[i:span.end]
+
+    #This has to be two loops as the iterable is modified, so need it written back before changing the start index.
+    for spanK, span in spans.items():
+        if docIn[span.end-1].ent_iob_ in ['I','B'] and span.end+1 < len(docIn):
+            j = span.end
+            while docIn[j].ent_iob_ != 'O':
+                j += 1
+            spans[spanK] = docIn[span.start:j]
+
+    """if pre !=spans:
+        print()
+        print("SSSSSSSSSSSSSSS")
+        print("ents ", docIn.ents)
+        print("nc ", list(docIn.noun_chunks))
+        print("Pre ", pre)
+        print("Post ", spans)
+        print("EEEEEEEEEEEEEEEE")
+        print()"""
+
     return spans
 
 if __name__ == '__main__':
     main()
+
+
 

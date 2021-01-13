@@ -1,8 +1,6 @@
 import spacy
-from spacy import displacy
 import pandas as pd
 import os
-from pathlib import Path
 from spacy.tokens import Span, Doc
 
 
@@ -70,7 +68,7 @@ def extractConnectives(doc):
         #Edge #4 -> or
         if tok.lower_ == 'or':
             for child in tok.head.children:
-                if child.dep_ == 'conj':
+                if child.dep_ == 'conj' and child.pos_ == 'VERB' and tok.head.pos_ == 'VERB':  #child and tok.head must both be verbs
                     print("NEW EDGE", tok.head, '-or->', child)
                     edges.append(Connective('OR',Span(doc,tok.head.i,tok.head.i+1),Span(doc,child.i,child.i+1),'ORxE4'))
                     break

@@ -1,21 +1,17 @@
-from graphviz import Digraph
-import matplotlib.pyplot as plt
+from graphviz import Digraph, Source
 from pprint import pprint
-from graphviz import Source
 import networkx as nx
-import nltk
 from pydot import graph_from_dot_data
 from logic import KnowledgeBase
 
-def argID(argV):
-    return (str(argV.start) +"X"+ str(argV.end)+argV.text.replace("\"",""))
-
 def getEdgeStyle(label):
-    if label in ['ARGM-ADV','ARGM-MOD']:
+    if label in ['ARGM-MOD', 'AND', 'OR', 'IF']:
         return 'dotted'
     else:
         return 'solid'
 
+def argIDGen(argV):
+    return (str(argV.start) + "X" + str(argV.end) + argV.text.replace("\"", ""))
 
 #Method to handle coreferences
 #If there is a registered coreference (as set under doc._.corefs) then check if its within the current span/argument,
@@ -34,6 +30,7 @@ class TLClaim:
     def __init__(self, docIn,OIEsubclaims,uvis):
         self.doc = docIn
         self.uvis = uvis
+        self.argBase = {}
 
         # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
         #To convert, need to form the abstract meaning representation graph:
@@ -54,6 +51,15 @@ class TLClaim:
             sc.ClaimPrint()
         print("/////////////////////////////////////////////////////////////")
 
+    def argID(self,argV):
+        argID = argIDGen(argV)
+
+        #Maintain a mapping of argID's being added to the graph & the spacy spans that spawned them.
+        if argID not in self.argBase:
+            self.argBase[argID] = argV
+
+        return argID
+
     #Takes subclaims and outputs graph relating their spans.
     def generateCG(self,OIEsubclaims,output=False):
         doc=self.doc
@@ -62,43 +68,48 @@ class TLClaim:
         verbSet = set()
         corefNodes = []
         corefEdges = []
-        G.node(argID(doc[:]), doc.text)
+        G.node(self.argID(doc[:]), doc.text)
         for claim in OIEsubclaims:
             root=claim['V']
-            G.node(argID(root), root.text+'/'+self.uvis.get(argID(root),'No UVI found'))
+            check = ''.join(filter(str.isalnum, str(root))).replace(' ', '')
+            if check =="": #Sometimes some nonsense can be attributed as a verb by oie.
+                continue
+            G.node(self.argID(root), root.text + '/' + self.uvis.get(self.argID(root), 'No UVI found'))
             for argK, argV in claim.items():
                 if argK != 'V':
-                    G.node(argID(argV), argV.text + "/" + str(argV.ents))
-                    G.edge(argID(argV), argID(root), label=argK.replace('-','x'), style=getEdgeStyle(argK))
+                    G.node(self.argID(argV), argV.text + "/" + str(argV.ents))
+                    G.edge(self.argID(argV), self.argID(root), label=argK.replace('-', 'x'), style=getEdgeStyle(argK))
                     # Replace any '-' with 'x' as '-' is a keyword for networkx, but is output by allennlp
                     argSet.add(argV)  # argV = arg value, not verb.
 
-                    # Store the coref edges for adding to the print graph only. If these are left on the networkx
+                    # If coref edges are left on the networkx
                     #graphs then they interfere with splitting into subclaims as the edges becomes bridges. The
                     #coreferences themselves are not lost as they're properties of the doc/spans. They are useful for
                     #illustratory and debugging purposes, and so can be output when requested with output=True
                     #This is deemed sound to omit from the networkx graph as a coreference does not result in two claims
                     #being co-dependent e.g. 'My son is 11. He likes to eat cake.' - the coreference bridges the two
-                    #otherwise separate components when there should be no co-dependence implied.
-
+                    #otherwise separate components when there should be no co-dependence implied. Both are about the
+                    #son, but there is not an iff relation between them.
                     if output:
                         for coref in argV._.SCorefs:
                             if coref[1] != argV:
-                                corefNodes.append((argID(coref[1]), coref[1].text + "/" + str(coref[1].ents)))
-                                corefEdges.append((argID(argV), argID(coref[1]), coref[0].text))
+                                corefNodes.append((self.argID(coref[1]), coref[1].text + "/" + str(coref[1].ents)))
+                                corefEdges.append((self.argID(argV), self.argID(coref[1]), coref[0].text))
 
                 else:
                     verbSet.add(argV)
 
         for edge in doc._.ConnectiveEdges:
-            G.node(argID(edge.start),edge.start.text)
-            G.node(argID(edge.end),edge.end.text)
-            G.edge(argID(edge.start),argID(edge.end),color=edge.colours[edge.connType],label=edge.connType)
+            G.node(self.argID(edge.start), edge.start.text)
+            G.node(self.argID(edge.end), edge.end.text)
+            G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType))
 
             if edge.connType == 'IF':
-                argSet.add(edge.start)
-                argSet.add(edge.end)
-                verbSet.add(edge.end)
+                #todo fix these 3 lines - the 'TV' including example ends up with having not a verb as the parent of the root.
+                #argSet.add(edge.start)
+                #argSet.add(edge.end)
+                #verbSet.add(edge.end)
+                None
 
             elif edge.connType == 'OR':
                 verbSet.add(edge.start)
@@ -109,8 +120,8 @@ class TLClaim:
             for parent in argSet:
                 if argV != parent and argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
                     shortestSpan=parent
-            G.node(argID(shortestSpan),shortestSpan.text)
-            G.edge(argID(argV),argID(shortestSpan),color='violet')
+            G.node(self.argID(shortestSpan), shortestSpan.text)
+            G.edge(self.argID(argV), self.argID(shortestSpan), color='violet')
 
         #If visual output requested, then add coref edges determined earlier to a copy of the graph and return that.
         #The returned graph is identical except for nodes created solely as coreference components and the green edges.
@@ -137,35 +148,42 @@ class TLClaim:
 
         # Do networkx things
         # Base of the doc:
-        subtreeRoots = list(p[0] for p in G.in_edges(nbunch=argID(self.doc[:]))) #Store the subclaim graph roots
-        H = nx.subgraph_view(G, filter_node=(lambda n: n != argID(self.doc[:]))) #Create a view without the overall text/main root.
+        subtreeRoots = list(p[0] for p in G.in_edges(nbunch=self.argID(self.doc[:]))) #Store the subclaim graph roots
+        H = nx.subgraph_view(G, filter_node=(lambda n: n != self.argID(self.doc[:]))) #Create a view without the overall text/main root.
+
 
         cycling = True
         while cycling:
             try:
                 # Create the subclaim graphs - once detaching the whole-text root these are connected components
                 subtrees = [H.subgraph(c).copy() for c in nx.weakly_connected_components(H)]
-                if len(subtrees) > 0:
-                    nx.drawing.nx_pydot.write_dot(subtrees[0], 'fish2')
             except nx.HasACycle:
-                G.remove_edge(nx.algorithms.cycles.find_cycle(G)[-1])
+                G.remove_edge(nx.find_cycle(G)[-1])
             except:
                 print('things have broken')
                 break
             else:
                 cycling = False
         for sc in subtrees:
+            dot=nx.drawing.nx_pydot.to_pydot(subtrees[0])
+            s=Source(dot,filename='fish2.gv',format='pdf')
+            #s.view()
             newuvis = {}
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
             for node in sc:
                 if node in self.uvis:
                     newuvis[node] = self.uvis[node]
-            claimsList.append(Claim(self.doc, sc, relRoots, newuvis))
+            removedEdges=[]
+            for j in relRoots:
+                for i in sc.out_edges(j):
+                    removedEdges.append((i[0],i[1]))
+            sc.remove_edges_from(removedEdges)
+            claimsList.append(Claim(self.doc, sc, relRoots, newuvis,self.argBase))
 
         return claimsList
 
 class Claim:
-    def __init__(self,docIn,graph,roots,uvi):
+    def __init__(self,docIn,graph,roots,uvi,argBase):
         #Claim has Verb and a range of arguments.
         #Also a UVI resolution, and any entities found within.
 
@@ -173,7 +191,8 @@ class Claim:
         self.uvis=uvi
         self.graph = graph
         self.roots=roots
-        self.kb = KnowledgeBase(self.graph, self.roots)
+        self.argBase = argBase
+        self.kb = KnowledgeBase(self.graph, self.roots,self.argBase)
 
 
         return
