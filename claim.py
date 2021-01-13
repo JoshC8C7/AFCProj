@@ -11,7 +11,14 @@ def getEdgeStyle(label):
         return 'solid'
 
 def argIDGen(argV):
-    return (str(argV.start) + "X" + str(argV.end) + argV.text.replace("\"", ""))
+    debug = True
+    if debug:
+        #For debug, use an arg generating function that yields closer to the existing string
+        k=(str(argV.start) + "X" + str(argV.end) +"X" +(argV.text.replace("\"", "").replace(":",""))) #Sanitize for graph
+        j = ''.join(filter(str.isalnum, str(k))).replace(' ', '') #Pre-emptively sanitize for KB also
+        return j
+    else: #Otherwise just use a hash
+        return (str(argV.start) + "X" + str(argV.end) +"X" +str(hash(argV.text)).replace("-","a"))
 
 #Method to handle coreferences
 #If there is a registered coreference (as set under doc._.corefs) then check if its within the current span/argument,
@@ -27,15 +34,19 @@ def getCorefs(span):
 
 class argNode():
 
+    #Doc is not stored explicitly as it will not be required from this point. Still obtainable from getDoc for debug.
     def __init__(self,ID,doc,span):
         self.ID = ID
         self.uvi = doc._.Uvis.get(span, None)
-        self.span = span #The span will also keep a pointer to its parent doc via spaCy.
+        self.span = span
         return
 
     def getUviOutput(self):
         if self.uvi is None: return "No Uvi Found"
         else: return str(self.uvi)
+
+    def getDoc(self):
+        return self.span.doc
 
 
 class TLClaim:

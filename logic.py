@@ -28,12 +28,6 @@ class KnowledgeBase():
         else:
             return 'other'
 
-    #Sanitizes string for rule instantiation, converting from graph-arg to KB-arg
-    def formatArg(self,arg):
-        retVal = ''.join(filter(str.isalnum, str(arg))).replace(' ', '')
-        return retVal
-
-
     def getFreeVar(self):
         modifier = self.freeVariableCounter // 26
         retVal = 'a'*modifier + string.ascii_lowercase[self.freeVariableCounter]
@@ -74,19 +68,17 @@ class KnowledgeBase():
         modifiers = []
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
-            #print("EDGE",edge)
             #Find the core args to create the predicate
             if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'core':
-                #Add the sanitised (for hashing purposes) argument at the end of the edge
-                argList.append(self.formatArg(edge[0]))
+                argList.append(edge[0])
         #Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
-        predicate = self.formatArg(root) + '(' + ','.join(argList) + ')'
+        predicate = (root) + '(' + ','.join(argList) + ')'
 
         #Now check for any non-leaf entries or modifiers
         count=0
         for edge in incomingEdges:
 
-            # it isn't a leaf argument
+            # if not a leaf argument (i.e. has incoming edges:)
             if edge[2].get('style','') != 'dotted' and len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
                 upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)
 
@@ -95,21 +87,22 @@ class KnowledgeBase():
                 freeVar = self.getFreeVar()
                 for i in range(0,len(incomingEdges)):
                     if i == count:
-                        miniArgList.append(self.formatArg(edge[0]))
+                        miniArgList.append((edge[0]))
                     else:
                         miniArgList.append(freeVar + str(i))
-                impliedArg = self.formatArg(root) + '(' + ",".join(miniArgList)+")"
+                impliedArg = (root) + '(' + ",".join(miniArgList)+")"
                 self.addToKb(upVal + ' -> ' + impliedArg)
 
             # Else if it's a modifier
             elif edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'mod':
                 #print("MODIFIER ", edge[2]['label']+'('+predicate+','+str(edge[0])+')')
-                modifiers.append(edge[2]['label']+'('+predicate+','+self.formatArg(edge[0])+')')
+                modifiers.append(edge[2]['label']+'('+predicate+','+(edge[0])+')')
             #else its a leaf, so just continue without adding any extra rules or modifier
 
             #Increase the count as we move to the count-th argument
             count+=1
 
+        #Add the predicates
         for m in modifiers:
             predicate += " & " + m
 

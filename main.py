@@ -34,9 +34,8 @@ def main():
         if s.split(" ")[0].lower() == "says":
             #todo instead, stick the person speaking on the front here
             s=(s.partition(" "))[1]
-        s.replace('&amp;','and')
         #Allows for filtering to debug specific example.
-        if (True or 'safely' in s) and any(x !=" " for x in s):
+        if (False or 'bastard' in s) and any(x !=" " for x in s):
             statementSet.add(s)
 
     #Load in AllenNLP (OIE, Coref), Flair (WSD) models.
@@ -47,6 +46,7 @@ def main():
     print("Models Loaded")
 
     for s in statementSet:
+        print(s)
         #Run respective models over statement
         doc=nlp(s)
         oie = predictorOIE.predict(s)
