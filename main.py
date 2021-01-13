@@ -16,6 +16,7 @@ def main():
     #Load in spaCy (Tokenizer, Dep parse, NER), and set extensions required for later use.
     nlp=spacy.load('en_core_web_lg')
     Doc.set_extension("DCorefs",default={})
+    Doc.set_extension("Uvis", default={})
     Doc.set_extension("ConnectiveEdges", default=[])
     Span.set_extension("SCorefs",getter=getCorefs)
     #Run connective extractor over input text and store result in doc._.extract_connectives.
@@ -68,6 +69,7 @@ def main():
         for e in sent1.to_dict(tag_type='frame')['entities']:
             newSpan = (doc.char_span(e['start_pos'],e['end_pos']))
             frames[newSpan] = e['labels'][0].value
+        doc._.Uvis = frames
 
         #Parse Open Information Extraction model response & combine with Verb Sense information.
         oieSubclaims = []
@@ -82,7 +84,7 @@ def main():
 
         #Information extraction completed, with doc._.DCorefs storing coreferences, frames storing VSD, oieSubclaims
         #storing extracted relations. These are all shared among the top-level claim, which is now instantiated.
-        tlClaim = TLClaim(doc,oieSubclaims,frames)
+        tlClaim = TLClaim(doc,oieSubclaims)
         #tlClaim.printTL()
 
 #Convert IOB argument tags from the OIE model into spaCy Spans, adjusting for curtailed entities.

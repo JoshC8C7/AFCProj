@@ -8,12 +8,11 @@ class KnowledgeBase():
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
     other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
 
-    def __init__(self, claimIn, roots,argBase,uvis):
+    def __init__(self, claimIn, roots,argBase):
         self.claimG = claimIn
         self.roots = roots
-        self.argBase = argBase
+        self.argBaseC = argBase
         self.kb = []
-        self.uvis = uvis
         self.freeVariableCounter = 0
 
 
@@ -31,34 +30,8 @@ class KnowledgeBase():
 
     #Sanitizes string for rule instantiation, converting from graph-arg to KB-arg
     def formatArg(self,arg):
-
-        #Retrieve spaCy Span from encoded graph node
-        argSpan = self.argBase[arg]
-
-        #todo not entirely sure if this is needed? The coreferences don't need to be part of the KB if they're
-        #checked on the logic before being sent to the kb?
-        if len(argSpan._.SCorefs) > 0 and arg not in self.uvis: #Exclude verbs from coreferences.
-            # push in coreferences if they exist
-            tokMap = {}
-            for coref in argSpan._.SCorefs:
-                for tok in argSpan:
-                    if tok.i == coref[0].start:
-                        tokMap[tok] = ''.join(x.text for x in coref[1])
-                    elif tok.i in range(coref[0].start,coref[0].end):
-                        tokMap[tok] = ''
-            newArgStr = ''
-            for tok in argSpan:
-                if tok in tokMap:
-                    newArgStr += tokMap[tok]
-                else:
-                    newArgStr += tok.text
-            #as retval is just a string here, have to generate its KB-arg manually.
-            retVal = (str(argSpan.start) + "X" + str(argSpan.end) + newArgStr.replace("\"", ""))
-        else:
-            retVal = arg
-
-        retVal = ''.join(filter(str.isalnum, str(retVal))).replace(' ', '')
-        return 'k' + retVal
+        retVal = ''.join(filter(str.isalnum, str(arg))).replace(' ', '')
+        return retVal
 
 
     def getFreeVar(self):
@@ -89,7 +62,6 @@ class KnowledgeBase():
             return
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
-        #pprint(self.kb)
         return
 
     def conjEstablish(self,rootsIn,seen):

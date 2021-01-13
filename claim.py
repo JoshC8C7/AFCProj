@@ -25,12 +25,24 @@ def getCorefs(span):
                 matches.append((corefK,corefV))
     return matches
 
+class argNode():
+
+    def __init__(self,ID,doc,span):
+        self.ID = ID
+        self.uvi = doc._.Uvis.get(span, None)
+        self.span = span #The span will also keep a pointer to its parent doc via spaCy.
+        return
+
+    def getUviOutput(self):
+        if self.uvi is None: return "No Uvi Found"
+        else: return str(self.uvi)
+
+
 class TLClaim:
 
-    def __init__(self, docIn,OIEsubclaims,uvis):
+    def __init__(self, docIn,OIEsubclaims):
+        self.argBaseC = {}
         self.doc = docIn
-        self.uvis = uvis
-        self.argBase = {}
 
         # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
         #To convert, need to form the abstract meaning representation graph:
@@ -38,8 +50,6 @@ class TLClaim:
 
         #...then extract the subclaims from the graph.
         self.subclaims = self.extractSubclaims()
-        #for x in self.subclaims:
-            #x.ClaimPrint()
 
 
     def printTL(self):
@@ -54,27 +64,27 @@ class TLClaim:
     def argID(self,argV):
         argID = argIDGen(argV)
 
-        #Maintain a mapping of argID's being added to the graph & the spacy spans that spawned them.
-        if argID not in self.argBase:
-            self.argBase[argID] = argV
+        #Maintain a mapping of argID's being added to the graph & their respective properties.
+        if argID not in self.argBaseC:
+            self.argBaseC[argID] = argNode(argID, self.doc, argV)
 
         return argID
 
     #Takes subclaims and outputs graph relating their spans.
-    def generateCG(self,OIEsubclaims,output=False):
-        doc=self.doc
+    def generateCG(self,OIEsubclaims, output=False):
         G = Digraph(strict=True,format='pdf')
         argSet= set()
         verbSet = set()
-        corefNodes = []
-        corefEdges = []
-        G.node(self.argID(doc[:]), doc.text)
+        corefNodes, corefEdges = [], []
+        G.node(self.argID(self.doc[:]), self.doc.text)
         for claim in OIEsubclaims:
+
             root=claim['V']
             check = ''.join(filter(str.isalnum, str(root))).replace(' ', '')
             if check =="": #Sometimes some nonsense can be attributed as a verb by oie.
                 continue
-            G.node(self.argID(root), root.text + '/' + self.uvis.get(root, 'No UVI found'))
+            G.node(self.argID(root), root.text + '/' + self.argBaseC[self.argID(root)].getUviOutput())
+
             for argK, argV in claim.items():
                 if argK != 'V':
                     G.node(self.argID(argV), argV.text + "/" + str(argV.ents))
@@ -99,7 +109,7 @@ class TLClaim:
                 else:
                     verbSet.add(argV)
 
-        for edge in doc._.ConnectiveEdges:
+        for edge in self.doc._.ConnectiveEdges:
             G.node(self.argID(edge.start), edge.start.text)
             G.node(self.argID(edge.end), edge.end.text)
             G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType))
@@ -116,7 +126,7 @@ class TLClaim:
                 verbSet.add(edge.end)
 
         for argV in verbSet:
-            shortestSpan=doc[:]
+            shortestSpan=self.doc[:]
             for parent in argSet:
                 if argV != parent and argV.start >= parent.start and argV.end <= parent.end and (parent.end-parent.start) < (shortestSpan.end-shortestSpan.start):
                     shortestSpan=parent
@@ -134,7 +144,6 @@ class TLClaim:
                 H.edge(edge[0],edge[1],color='green',label=edge[2])
             H.save(filename=(str(hash(self.doc))))
 
-
         return G
 
 
@@ -142,15 +151,11 @@ class TLClaim:
         G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
         claimsList = []
         subtrees = []
-        #Cycles are rare in the data but can still crop up, but rarely enough that checking every graph for cycles
-        #if a waste of computation. Instead, catch networkx finding a cycle/raising HasACycle and then remove an edge
-        #from the offending loop before retrying. todo check if this is actually quicker
 
         # Do networkx things
         # Base of the doc:
         subtreeRoots = list(p[0] for p in G.in_edges(nbunch=self.argID(self.doc[:]))) #Store the subclaim graph roots
         H = nx.subgraph_view(G, filter_node=(lambda n: n != self.argID(self.doc[:]))) #Create a view without the overall text/main root.
-
 
         cycling = True
         while cycling:
@@ -159,47 +164,36 @@ class TLClaim:
                 subtrees = [H.subgraph(c).copy() for c in nx.weakly_connected_components(H)]
             except nx.HasACycle:
                 G.remove_edge(nx.find_cycle(G)[-1])
-            except:
-                print('things have broken')
-                break
             else:
                 cycling = False
         for sc in subtrees:
             dot=nx.drawing.nx_pydot.to_pydot(subtrees[0])
             s=Source(dot,filename='fish2.gv',format='pdf')
-            #s.view()
-            newuvis = {}
+            s.view()
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
-            for node in sc:
-                if self.argBase[node] in self.uvis:
-                    newuvis[node] = self.uvis[self.argBase[node]]
             removedEdges=[]
             for j in relRoots:
                 for i in sc.out_edges(j):
                     removedEdges.append((i[0],i[1]))
             sc.remove_edges_from(removedEdges)
-            print("UVIS: ", newuvis)
-            claimsList.append(Claim(self.doc, sc, relRoots, newuvis,self.argBase))
+            claimsList.append(Claim(self, sc, relRoots))
 
         return claimsList
 
 class Claim:
-    def __init__(self,docIn,graph,roots,uvi,argBase):
+    def __init__(self,tlClaim,graph,roots):
         #Claim has Verb and a range of arguments.
         #Also a UVI resolution, and any entities found within.
 
-        self.doc=docIn #spacy Doc - just points to parent TLClaim's doc.
-        self.uvis=uvi
+        self.doc=tlClaim.doc #spacy Doc - just points to parent TLClaim's doc.
         self.graph = graph
         self.roots=roots
-        self.argBase = argBase
-        self.kb = KnowledgeBase(self.graph, self.roots,self.argBase, self.uvis)
+        self.kb = KnowledgeBase(self.graph, self.roots,tlClaim.argBaseC)
 
 
         return
 
     def ClaimPrint(self):
-        print(self.uvis)
         print(self.roots)
         nx.drawing.nx_pydot.write_dot(self.graph, 'fishx')
         return
