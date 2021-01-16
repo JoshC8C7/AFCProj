@@ -11,7 +11,9 @@ import pathlib
 
 
 def main():
-    pathlib.PosixPath = pathlib.WindowsPath #Small hack to handle AllenNLP & Flair not being compatible with windows
+    # Small hack to handle AllenNLP & Flair not being compatible with windows
+    if os.name == 'nt':
+        pathlib.PosixPath = pathlib.WindowsPath
 
     #Load in spaCy (Tokenizer, Dep parse, NER), and set extensions required for later use.
     nlp=spacy.load('en_core_web_lg')

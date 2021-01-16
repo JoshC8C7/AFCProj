@@ -1,6 +1,6 @@
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
-import string
+from string import ascii_lowercase
 
 class KnowledgeBase():
 
@@ -18,6 +18,8 @@ class KnowledgeBase():
 
         self.graph2rules()
 
+    #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
+    #leads to a modifier (ARGM-) or a leaf argument ('other').
     def modOrCore(self,edge):
         if edge[2].get('label','') in self.core:
             return 'core'
@@ -28,9 +30,10 @@ class KnowledgeBase():
         else:
             return 'other'
 
+    #Generates a unique free variable for the knowledge base rules to be instantiated with.
     def getFreeVar(self):
         modifier = self.freeVariableCounter // 26
-        retVal = 'a'*modifier + string.ascii_lowercase[self.freeVariableCounter]
+        retVal = 'a'*modifier + ascii_lowercase[self.freeVariableCounter]
         self.freeVariableCounter+=1
         return retVal
 
@@ -41,27 +44,31 @@ class KnowledgeBase():
 
 
     def graph2rules(self):
+        #Keep track of seen nodes as to avoid cycles.
         seen = set()
         #Starting at 'root' verb(s), it being fulfilled means it implies argF(root) - conjuncted with any other root verbs in the subgraph. 'make(IG_report, clear_that) -> argF(root)'
         #To check if its fulfilled, check all in-edges.
         #1. The edge is to a simple arg leaf - it then becomes part of the parent verb i.e. sells(Tesco,____)
-        #2. The edge is to an arg that is established by a tree - this is placed as fulfilling the correct argument e.g.-> sells(x,parentTree(something,__))
+        #2. The edge is to an arg that is established by a tree - this is placed as fulfilling the correct argument e.g.-> sells(a1,makes_clear_that_impeachment))
         #2b. Case 2 applies to multiple edges - multiple gaps left e.g. sells(x,y).
         #3. Multiple verbs required to establish 1 arg (i.e. multiple purple edges), the below verb is implied by a conjunction of parent verbs. 'when(launch(fbi, investigation),tuesday) & sell(ducks,children) -> make(x, clear_that) '
-        #When determining what to term, post to the coref checker to sub in any required coreferences.
         #FOR MODIFIERS - form a new term wrapping the verb in them e.g. starting with launch(fbi, investigation) if it happened on tuesday, we add '& when(launch(fbi,investigation), tuesday))'
         #todo cyan and red nodes?
         if len(self.roots) ==0:
             print("No roots")
             return
+        #Create the root implication as the conjunction of the verbs that feed into the root.
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
         return
 
+    #For multiple verbs feeding one argument, the argument is implied by the conjunction of the subtrees rooted at the verbs
+    #So to establish an argument which has incoming edges, we must establish all incoming edges.
     def conjEstablish(self,rootsIn,seen):
         filteredRoots=(y for y in rootsIn if len(self.claimG.in_edges(nbunch=y)) > 0)
         return " & ".join(list((self.establishRule(x,seen) for x in filteredRoots)))
 
+    #Take a node and establish it as a predicate function, with its arguments being the verb/nodes arguments.
     def establishRule(self,root,seen):
         seen.add(root)
         argList = []
@@ -97,7 +104,8 @@ class KnowledgeBase():
             elif edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'mod':
                 #print("MODIFIER ", edge[2]['label']+'('+predicate+','+str(edge[0])+')')
                 modifiers.append(edge[2]['label']+'('+predicate+','+(edge[0])+')')
-            #else its a leaf, so just continue without adding any extra rules or modifier
+
+            #Else its a leaf, so just continue without adding any extra rules or modifier
 
             #Increase the count as we move to the count-th argument
             count+=1
