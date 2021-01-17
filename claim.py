@@ -59,6 +59,9 @@ class argNode():
         self.span = span
         return
 
+    def __repr__(self):
+        return self.getUviOutput() + " " + self.span.text
+
     #Provide verb sense in readable format (if one exists)
     def getUviOutput(self):
         if self.uvi is None: return "No Uvi Found"
@@ -68,16 +71,16 @@ class argNode():
         return self.span.doc
 
 #Top level claim - one exists for each input claim (= 1 spacy doc), and consists of multiple subclaims.
-class TLClaim:
+class docClaim:
 
-    def __init__(self, docIn,OIEsubclaims):
+    def __init__(self, docIn, isTLClaim = False):
         #argBaseC is a central store of spacy Spans, IDs, VSD, coreferences on a per-argument level.
         self.argBaseC = {}
         self.doc = docIn
 
         # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
         #To convert, need to form the abstract meaning representation graph:
-        self.graph = self.generateCG(OIEsubclaims, True)
+        self.graph = self.generateCG(docIn._.OIEs, True)
 
         #...then extract the subclaims from the graph.
         self.subclaims = self.extractSubclaims()
@@ -155,6 +158,7 @@ class TLClaim:
             G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType))
 
             if edge.connType == 'IF':
+                raise NotImplementedError
                 #todo fix these 3 lines - the 'TV' including example ends up with having not a verb as the parent of the root.
                 #argSet.add(edge.start)
                 #argSet.add(edge.end)
@@ -186,7 +190,9 @@ class TLClaim:
                 H.node(node[0],node[1])
             for edge in corefEdges:
                 H.edge(edge[0],edge[1],color='green',label=edge[2])
-            H.save(filename=(str(hash(self.doc))))
+            s=Source(H,filename='fish2.gv',format='pdf')
+            s.view()
+            #H.save(filename=(str(hash(self.doc))))
 
         return G
 
@@ -220,7 +226,7 @@ class TLClaim:
         for sc in subtrees:
             dot=nx.drawing.nx_pydot.to_pydot(subtrees[0])
             s=Source(dot,filename='fish2.gv',format='pdf')
-            s.view()
+            #s.view()
             #take all roots that form this subclaim (could be multiple if they're connected - this makes the 'tree' not
             #strictly a 'tree').
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))

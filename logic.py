@@ -14,19 +14,47 @@ class KnowledgeBase():
         self.argBaseC = argBase
         self.kb = []
         self.freeVariableCounter = 0
-
-
+        self.searchTerms=[]
         self.graph2rules()
+
+    def prepSearch(self):
+        queries=[]
+        if self.searchTerms == []:
+            for root in self.roots:
+                self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
+        for term in self.searchTerms:
+            spanList= sorted(list(self.argBaseC[arg].span for arg in term[1] + [term[0]]),key=lambda x: x.start)
+            spanListCoref=[]
+            for span in spanList:
+                if span._.SCorefs != []:
+                    nspan = list(tok for tok in span)
+                    for tok in span._.SCorefs[0][0]:
+                        nspan.remove(tok)
+                    for tok in span._.SCorefs[0][1]:
+                        nspan.append(tok)
+                    nspan = sorted(nspan,key= lambda tok: tok.i)
+                    for n in nspan:
+                        spanListCoref.append(n)
+                else:
+                    for n in span:
+                        spanListCoref.append(n)
+            queries.append(" ".join(x.text for x in spanListCoref))
+        return queries
+
+
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
     #leads to a modifier (ARGM-) or a leaf argument ('other').
     def modOrCore(self,edge):
+        if len(self.claimG.in_edges(nbunch=edge[0])) > 0:
+            return 'coreInternal'
         if edge[2].get('label','') in self.core:
             return 'core'
-        if len(self.claimG.in_edges(nbunch=edge[0])) > 0:
-            return 'core'
         if edge[2].get('label','SKIP') not in self.core + self.other:
-            return 'mod'
+            if edge[2].get('label','SKIP') == 'ARGM-NEG':
+                return 'neg'
+            else:
+                return 'mod'
         else:
             return 'other'
 
@@ -76,17 +104,22 @@ class KnowledgeBase():
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
             #Find the core args to create the predicate
-            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'core':
+            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core']:
                 argList.append(edge[0])
         #Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
         predicate = (root) + '(' + ','.join(argList) + ')'
 
+        if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
+            self.searchTerms.append((root,argList))
+
         #Now check for any non-leaf entries or modifiers
         count=0
         for edge in incomingEdges:
+            if edge[2].get('style','') == 'dotted':
+                continue
 
             # if not a leaf argument (i.e. has incoming edges:)
-            if edge[2].get('style','') != 'dotted' and len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
+            if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
                 upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)
 
                 #Fill in all bar the (count)th arguments with free variables:
@@ -100,8 +133,11 @@ class KnowledgeBase():
                 impliedArg = (root) + '(' + ",".join(miniArgList)+")"
                 self.addToKb(upVal + ' -> ' + impliedArg)
 
+            elif self.modOrCore(edge) == 'neg':
+                predicate = '-' + predicate
+
             # Else if it's a modifier
-            elif edge[2].get('style','') != 'dotted' and self.modOrCore(edge) == 'mod':
+            elif self.modOrCore(edge) == 'mod':
                 #print("MODIFIER ", edge[2]['label']+'('+predicate+','+str(edge[0])+')')
                 modifiers.append(edge[2]['label']+'('+predicate+','+(edge[0])+')')
 
