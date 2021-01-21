@@ -1,4 +1,7 @@
-/frames/
 /output/
 /.idea/
-/gv/
+/data/srl_bert_base_conll2012.tar.gz
+/ncf/
+/data/sources
+/data/Politihop
+/data/SearchCache.pickle

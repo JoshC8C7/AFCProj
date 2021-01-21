@@ -1,13 +1,10 @@
 import requests
 from newspaper import Article, Config, ArticleException
 from newspaper.utils import BeautifulSoup
-from azure.cognitiveservices.search.customsearch import CustomSearchClient
-from msrest.authentication import CognitiveServicesCredentials
 import pickle
 import os
 import time
-import json
-from pprint import pprint
+
 
 GOOGLE_API_KEY = 'AIzaSyCpq7_EUObEz3azL3CrkZwK7OUIASMqLsA'
 BING_FREE_KEY = 'e5da3b0fd59a4161ad4aac8b8c5535b0'
@@ -110,14 +107,14 @@ def create():
     import json
     import csv
     safe =[]
-    with open('data/csources.json') as json_file:
+    with open('data/sources/csources.json') as json_file:
         data = json.load(json_file)
         for pk, pv in data.items():
             if pv.get('r',"") in ("VH","H","MF"):
                 print(pk, pv['r'])
                 safe.append([pk])
 
-    with open('data/wikiS.csv') as wiki_file:
+    with open('data/sources/wikiS.csv') as wiki_file:
         reader = csv.reader(wiki_file)
         inList = list(reader)[1:]
     print(inList)
@@ -131,7 +128,7 @@ def create():
             safe.append([x])
 
     print(safe)
-    with open('trusted.csv','w+',newline='') as f:
+    with open('data/sources/trusted.csv','w+',newline='') as f:
         writer = csv.writer(f)
         writer.writerows(safe)
         """
