@@ -41,6 +41,7 @@ def main():
                 if len(a) < 5 or 'cookies' in sources:
                     sources.remove(a)
             newData = batchProc(sources)
+            webcrawl.dumpToCache()
 
             for doc in newData:
                 try:

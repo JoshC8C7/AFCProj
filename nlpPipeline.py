@@ -1,25 +1,21 @@
-from allennlp.predictors.predictor import Predictor
 import spacy
 from spacy.tokens import Doc, Span
-from flair.data import Sentence
-from flair.models import SequenceTagger
 from claim import getCorefs
 import connectives as con
 import pathlib
 import os
+from pprint import pprint
+from transformer_srl import dataset_readers,models,predictors
+import  neuralcoref
 #This is a module rather than a class to enforce singleton behaviour of the models. The nlp model is used across the
 #files and so should be accessible from each module rather than through a single object.
-
-
-# Small hack to handle AllenNLP & Flair not being compatible with windows
-if os.name == 'nt':
-    pathlib.PosixPath = pathlib.WindowsPath
 
 
 def oiePipe(doc):
     oie = predictorOIE.predict(doc.text)
     # Parse Open Information Extraction model response & combine with Verb Sense information.
     oieSubclaims = []
+    frames={}
     for e in oie['verbs']:
         oiespans = tags2spans(e['tags'], doc)
         # Drop extracted relations that don't have a verb and at least 1 numbered argument.
@@ -27,38 +23,32 @@ def oiePipe(doc):
                 all(x not in oiespans for x in ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']) > 0:
             print("axing ", oiespans)
             continue
+        #print(oiespans['V'], " ",e['frame'], " ", e['frame_score'])
+        frames[oiespans['V']] = e['frame']
         oieSubclaims.append(oiespans)
+
     #Store OIEs with the document. Whilst these are only retrieved once, they must be stored within the document
     #to allow spaCy to parallelize.
     doc._.OIEs = oieSubclaims
+    doc._.Uvis = frames
+
     return doc
 
 def corefPipe(doc):
-    try:
-        coref = predictorCoref.predict(doc.text)
-    except:
-        coref = {}
     # Parse coreference resolution model response into corefSpans = {text (Span): what its coreferencing (Span)}
-    corefSpans = {}
-    if len(coref['clusters']):
+    print("new ", doc._.coref_clusters)
+    #todo corefSpans takes format of {their: Nancy Pelosi} i.e. k=coreference v=thing its pointing to
+
+    """if len(coref['clusters']):
         for index, value in enumerate(coref.get('predicted_antecedents',[])):
             if value != -1:
                 source = coref['top_spans'][index]
                 dest = coref['top_spans'][value]
                 corefSpans[doc[source[0]:source[1] + 1]] = doc[dest[0]:dest[1] + 1]
+    """
     doc._.DCorefs = corefSpans
-    return doc
+    print("OLD ", corefSpans)
 
-def vsdPipe(doc):
-    sent1=Sentence(doc.text)
-    tagger.predict(sent1)
-
-    #Disambiguate verb senses - Flair maps to PropBank verb sense. frames = {text (Span): Verb Sense (string)}
-    frames={}
-    for e in sent1.to_dict(tag_type='frame')['entities']:
-        newSpan = (doc.char_span(e['start_pos'],e['end_pos']))
-        frames[newSpan] = e['labels'][0].value
-    doc._.Uvis = frames
     return doc
 
 
@@ -74,18 +64,12 @@ Doc.set_extension("ConnectiveEdges", default=[])
 Span.set_extension("SCorefs", getter=getCorefs)
 # Run connective extractor over input text and store result in doc._.extract_connectives.
 nlp.add_pipe(oiePipe,name='oie',last=True)
+neuralcoref.add_to_pipe(nlp)
 nlp.add_pipe(corefPipe,name='coref',last=True)
-nlp.add_pipe(vsdPipe,name='VSD',last=True)
 nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 
-# Load in AllenNLP (OIE, Coref), Flair (WSD) models.
-predictorOIE = Predictor.from_path(
-    "https://storage.googleapis.com/allennlp-public-models/openie-model.2020.03.26.tar.gz")
-predictorCoref = Predictor.from_path(
-    "https://storage.googleapis.com/allennlp-public-models/coref-spanbert-large-2020.02.27.tar.gz")
-tagger = SequenceTagger.load('frame')
+predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")
 print("Models Loaded")
-
 
 def batchProc(statementSet):
     docs = list(nlp.pipe(list(statementSet)))
@@ -134,3 +118,5 @@ def tags2spans(tags,docIn):
 
     return spans
 
+if __name__ == 'main':
+    print("Running this file has no effect! Run main.py instead.")

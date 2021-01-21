@@ -1,9 +1,46 @@
 import requests
 from newspaper import Article, Config, ArticleException
 from newspaper.utils import BeautifulSoup
+import pickle
+import os
 
 API_KEY = 'AIzaSyCpq7_EUObEz3azL3CrkZwK7OUIASMqLsA'
 SEARCH_ENGINE_ID = 'be06938b6f07a2eb1'
+CACHE_FILE='data/SearchCache.pickle'
+SELECTED_SEARCH='google'
+
+if os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE, 'rb') as cache:
+        web_cache = pickle.load(cache)
+        print("Web Cache loaded")
+
+def googleQ(term):
+    print("searching ",term)
+    num = 5
+    url = f"https://www.googleapis.com/customsearch/v1?key={API_KEY}&cx={SEARCH_ENGINE_ID}&q={term}&num={num}"
+    data = requests.get(url).json()
+    found = data.get("items")
+    return(i['link'] for i in found)
+
+def bingFree(term):
+
+    return ''
+
+def bingS1(term):
+    return ''
+
+search_opts = {'google':googleQ, 'bingFree':bingFree,'bingS1':bingS1}
+
+
+
+def searchFetch(term):
+    if term in web_cache:
+        return web_cache[term]
+    else:
+        searchFunct = search_opts[SELECTED_SEARCH]
+        res = searchFunct(term)
+        web_cache[term] = res
+        return res
 
 
 def nlpFeed(t):
@@ -34,13 +71,9 @@ def nlpFeed(t):
 
     return sources
 
-def googleQ(term):
-    print("searching ",term)
-    num = 5
-    url = f"https://www.googleapis.com/customsearch/v1?key={API_KEY}&cx={SEARCH_ENGINE_ID}&q={term}&num={num}"
-    data = requests.get(url).json()
-    found = data.get("items")
-    return(i['link'] for i in found)
+def dumpToCache():
+    with open(CACHE_FILE, 'wb') as cache:
+        pickle.dump(web_cache,cache)
 
 """
 def create():
