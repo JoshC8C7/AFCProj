@@ -1,9 +1,6 @@
 import spacy
 from spacy.tokens import Doc, Span
-from claim import getCorefs
 import connectives as con
-import pathlib
-import os
 from pprint import pprint
 from transformer_srl import dataset_readers,models,predictors
 import  neuralcoref
@@ -34,38 +31,17 @@ def oiePipe(doc):
 
     return doc
 
-def corefPipe(doc):
-    # Parse coreference resolution model response into corefSpans = {text (Span): what its coreferencing (Span)}
-    print("new ", doc._.coref_clusters)
-    #todo corefSpans takes format of {their: Nancy Pelosi} i.e. k=coreference v=thing its pointing to
-
-    """if len(coref['clusters']):
-        for index, value in enumerate(coref.get('predicted_antecedents',[])):
-            if value != -1:
-                source = coref['top_spans'][index]
-                dest = coref['top_spans'][value]
-                corefSpans[doc[source[0]:source[1] + 1]] = doc[dest[0]:dest[1] + 1]
-    """
-    doc._.DCorefs = corefSpans
-    print("OLD ", corefSpans)
-
-    return doc
-
-
 
 # Load in spaCy (Tokenizer, Dep parse, NER), and set extensions required for later use.
 print("Initiating model load...",end="")
 nlp = spacy.load('en_core_web_lg')
 print("..")
-Doc.set_extension("DCorefs", default={})
 Doc.set_extension("Uvis", default={})
 Doc.set_extension("OIEs", default={})
 Doc.set_extension("ConnectiveEdges", default=[])
-Span.set_extension("SCorefs", getter=getCorefs)
 # Run connective extractor over input text and store result in doc._.extract_connectives.
-nlp.add_pipe(oiePipe,name='oie',last=True)
 neuralcoref.add_to_pipe(nlp)
-nlp.add_pipe(corefPipe,name='coref',last=True)
+nlp.add_pipe(oiePipe,name='oie',last=True)
 nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 
 predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")

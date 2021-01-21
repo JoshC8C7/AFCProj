@@ -2,6 +2,14 @@ from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
 from string import ascii_lowercase
 
+def getSpanCoref(span):
+    corefSet = set()
+    for tok in span:
+        if tok._.in_coref:
+            for cf in tok._.coref_clusters:
+                corefSet.add(cf)
+    return list(corefSet)
+
 class KnowledgeBase():
 
     prover = None
@@ -19,26 +27,30 @@ class KnowledgeBase():
 
     def prepSearch(self):
         queries=[]
-        if self.searchTerms == []:
+        if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
         for term in self.searchTerms:
             spanList= sorted(list(self.argBaseC[arg].span for arg in term[1] + [term[0]]),key=lambda x: x.start)
             spanListCoref=[]
             for span in spanList:
-                if span._.SCorefs != []:
-                    nspan = list(tok for tok in span)
-                    for tok in span._.SCorefs[0][0]:
-                        nspan.remove(tok)
-                    for tok in span._.SCorefs[0][1]:
-                        nspan.append(tok)
-                    nspan = sorted(nspan,key= lambda tok: tok.i)
-                    for n in nspan:
-                        spanListCoref.append(n)
+                spanCorefs=getSpanCoref(span)
+                if len(spanCorefs):
+                    spanCorefs = spanCorefs[0]            #todo spans with more than one ent? (rare case atm)
+                    if not all(tok.pos_ == "PRON" for tok in spanCorefs.main) and not span == spanCorefs.main:
+                        gapStart = next(tok for tok in span if tok._.in_coref).i
+                        nspan = list(tok for tok in span[:gapStart])
+                        nspan.extend(tok for tok in spanCorefs.main)
+                        if list(tok for tok in span[gapStart:] if not tok._.in_coref):
+                            gapEnd = next(tok for tok in span[gapStart:]).i
+                            nspan.extend(tok for tok in span[gapEnd:])
+                        spanListCoref.extend(nspan)
+                    else:
+                        for n in span: spanListCoref.append(n)
                 else:
-                    for n in span:
-                        spanListCoref.append(n)
+                    for n in span: spanListCoref.append(n)
             queries.append(" ".join(x.text for x in spanListCoref))
+        print("SE: ", self.searchTerms, " QE", queries)
         return queries
 
 
@@ -67,7 +79,7 @@ class KnowledgeBase():
 
     def addToKb(self,text):
         self.kb.append(expr.fromstring(text))
-        print("adding to kb ",text)
+        #print("adding to kb ",text)
         return
 
 

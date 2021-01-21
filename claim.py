@@ -1,8 +1,7 @@
 from graphviz import Digraph, Source
 import networkx as nx
 from pydot import graph_from_dot_data
-from logic import KnowledgeBase
-
+from logic import KnowledgeBase, getSpanCoref
 
 def getEdgeStyle(label):
     if label in ['ARGM-MOD', 'AND', 'OR', 'IF']:
@@ -20,18 +19,6 @@ def argIDGen(argV):
         return j
     else: #Otherwise just use a hash
         return (str(argV.start) + "X" + str(argV.end) +"X" +str(hash(argV.text)).replace("-","a"))
-
-#Method to handle coreferences
-#If there is a registered coreference (as set under doc._.corefs) then check if its within the current span/argument,
-#if there is one then return that (i.e. return 'Bob' rather than 'he'), otherwise just return []
-def getCorefs(span):
-    matches=[]
-    for corefK, corefV in span.doc._.DCorefs.items():
-        #is coref within span?
-        if corefK.start >= span.start and corefK.end <=span.end:
-            if not any(tok.pos_ == "PRON" for tok in corefV):
-                matches.append((corefK,corefV))
-    return matches
 
 class Claim:
     def __init__(self,tlClaim,graph,roots):
@@ -73,7 +60,7 @@ class argNode():
 #Top level claim - one exists for each input claim (= 1 spacy doc), and consists of multiple subclaims.
 class docClaim:
 
-    def __init__(self, docIn, isTLClaim = False):
+    def __init__(self, docIn):
         #argBaseC is a central store of spacy Spans, IDs, VSD, coreferences on a per-argument level.
         self.argBaseC = {}
         self.doc = docIn
@@ -100,7 +87,7 @@ class docClaim:
 
     #Create graph relating extracted arguments, outputting it if requested.
     def generateCG(self,OIEsubclaims, output=False):
-
+        output=True
         #The graph is directed as all edges are either implication or property-of relations. Use strict Digraphs to
         #prevent any duplicate edges.
         G = Digraph(strict=True,format='pdf')
@@ -141,11 +128,19 @@ class docClaim:
                     #being co-dependent e.g. 'My son is 11. He likes to eat cake.' - the coreference bridges the two
                     #otherwise separate components when there should be no co-dependence implied. Both are about the
                     #son, but there is not an iff relation between them.
-                    if output:
-                        for coref in argV._.SCorefs:
-                            if coref[1] != argV:
-                                corefNodes.append((self.argID(coref[1]), coref[1].text + "/" + str(coref[1].ents)))
-                                corefEdges.append((self.argID(argV), self.argID(coref[1]), coref[0].text))
+                    #print(argV, "  cf ", argV._.coref_cluster)
+                    argVcf = getSpanCoref(argV)
+                    if output and len(argVcf):
+                        for cluster in argVcf:
+                            mainSpan = cluster.main
+                            for inst in cluster.mentions:
+                                #print()
+                                #print(argV, "[",argV.start,":",argV.end,"] , ",inst, " [",inst.start,":",inst.end,"]")
+                                if inst.start >= argV.start and inst.end <= argV.end and inst != mainSpan:
+                                    #todo this should point back around to another arg where it encapsulates it.
+                                    corefNodes.append((self.argID(mainSpan), mainSpan.text + "/" + str(mainSpan.ents)))
+                                    #print(argV, "/", inst, " -> ", mainSpan)
+                                    corefEdges.append((self.argID(argV), self.argID(mainSpan), inst.text))
 
                 #Add all verbs to the list of eligible roots for subtrees.
                 else:

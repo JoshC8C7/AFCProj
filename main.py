@@ -2,7 +2,7 @@ import pandas as pd
 from os import path
 from nlpPipeline import batchProc
 from claim import docClaim
-from webcrawl import nlpFeed
+from webcrawl import nlpFeed, dumpToCache
 
 
 def main():
@@ -26,22 +26,24 @@ def main():
     docs = batchProc(statementSet)
 
     for doc in docs:
-        input("press enter for next")
+
         try:
-            tlClaim = docClaim(doc,isTLClaim=True)
+            tlClaim = docClaim(doc)
         except NotImplementedError:
             continue
-        """for subclaim in tlClaim.subclaims:
+        for subclaim in tlClaim.subclaims:
             queries = subclaim.kb.prepSearch()
             sources=[]
             for q in queries:
                 sources.extend(nlpFeed(q))
+                input("press enter for next")
             print("SOU", sources)
+
             for a in sources:
                 if len(a) < 5 or 'cookies' in sources:
                     sources.remove(a)
             newData = batchProc(sources)
-            webcrawl.dumpToCache()
+            dumpToCache()
 
             for doc in newData:
                 try:
@@ -53,15 +55,10 @@ def main():
                     print(sc.kb)
                 print("EVKB-E")
             #Make the new claims into the graph, then into logic.
-"""
+
 
 
         print("...............")
-
-    #Information extraction completed, with doc._.DCorefs storing coreferences, frames storing VSD, oieSubclaims
-    #storing extracted relations. These are all shared among the top-level claim, which is now instantiated.
-    #tlClaim = TLClaim(doc,oieSubclaims)
-    #tlClaim.printTL()
 
 if __name__ == '__main__':
     main()
