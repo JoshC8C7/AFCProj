@@ -1,6 +1,8 @@
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
 from string import ascii_lowercase
+from spacy.tokens.token import Token
+import claim
 
 def getSpanCoref(span):
     corefSet = set()
@@ -27,38 +29,54 @@ class KnowledgeBase():
 
     def prepSearch(self):
         queries=[]
+        entities=[]
+        ncs=[]
+        newNCs=[]
         if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
         for term in self.searchTerms:
             spanList= sorted(list(self.argBaseC[arg].span for arg in term[1] + [term[0]]),key=lambda x: x.start)
-            spanListCoref=[]
+            corefSubbedSpans = []
             for span in spanList:
-                spanCorefs=getSpanCoref(span)
-                if len(spanCorefs):
-                    spanCorefs = spanCorefs[0]            #todo spans with more than one ent? (rare case atm)
-                    if not all(tok.pos_ == "PRON" for tok in spanCorefs.main) and not span == spanCorefs.main:
-                        gapStart = next(tok for tok in span if tok._.in_coref).i
-                        nspan = list(tok for tok in span[:gapStart])
-                        nspan.extend(tok for tok in spanCorefs.main)
-                        if list(tok for tok in span[gapStart:] if not tok._.in_coref):
-                            gapEnd = next(tok for tok in span[gapStart:]).i
-                            nspan.extend(tok for tok in span[gapEnd:])
-                        spanListCoref.extend(nspan)
+                entities.extend(span.ents)
+                ncs.extend(span.noun_chunks)
+                usedCorefs = []
+                newSpan = []
+                for tok in span:
+                    if tok._.in_coref and tok.tag_ in ('PRP', 'PRP$'):
+                        coref = tok._.coref_clusters[0]
+                        if coref not in usedCorefs:
+                            newSpan.extend(tok for tok in coref.main)
+                            usedCorefs.append(coref)
+                            entities.extend(coref.main.ents)
+                        if tok.tag_ == 'PRP$':
+                            newSpan.append("'s ")
                     else:
-                        for n in span: spanListCoref.append(n)
-                else:
-                    for n in span: spanListCoref.append(n)
-            queries.append(" ".join(x.text for x in spanListCoref))
-        print("SE: ", self.searchTerms, " QE", queries)
-        return queries
+                        newSpan.append(tok)
+                corefSubbedSpans.append(''.join((tok.text_with_ws if type(tok) == Token else tok) for tok in newSpan))
+            queries.append(' '.join(corefSubbedSpans).replace('  ',' ').replace(" 's","'s"))
 
+            newNCs = []
+            for val in ncs:
+                newNc=[]
+                for tok in val:
+                    if tok.tag_ not in claim.grammaticalTAG + ['PRP','PRP$'] and tok.pos_ not in claim.grammaticalPOS:
+                        newNc.append(tok)
+                    else:
+                        print("Dropping:",tok)
+                if newNc:
+                    newNCs.append(''.join(tok.text_with_ws for tok in newNc))
+
+        #print("ST: ", self.searchTerms, " QU:", queries)y
+
+        return queries, list(x.text for x in entities), newNCs
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
     #leads to a modifier (ARGM-) or a leaf argument ('other').
     def modOrCore(self,edge):
-        if len(self.claimG.in_edges(nbunch=edge[0])) > 0:
+        if len(list(x for x in self.claimG.in_edges(nbunch=edge[0],data=True) if x[2].get('style','') != 'dotted')):
             return 'coreInternal'
         if edge[2].get('label','') in self.core:
             return 'core'
@@ -73,13 +91,13 @@ class KnowledgeBase():
     #Generates a unique free variable for the knowledge base rules to be instantiated with.
     def getFreeVar(self):
         modifier = self.freeVariableCounter // 26
-        retVal = 'a'*modifier + ascii_lowercase[self.freeVariableCounter]
+        retVal = 'a'*modifier + ascii_lowercase[self.freeVariableCounter // 26]
         self.freeVariableCounter+=1
         return retVal
 
     def addToKb(self,text):
+        #print("adding to kb ", text)
         self.kb.append(expr.fromstring(text))
-        #print("adding to kb ",text)
         return
 
 
@@ -106,7 +124,8 @@ class KnowledgeBase():
     #So to establish an argument which has incoming edges, we must establish all incoming edges.
     def conjEstablish(self,rootsIn,seen):
         filteredRoots=(y for y in rootsIn if len(self.claimG.in_edges(nbunch=y)) > 0)
-        return " & ".join(list((self.establishRule(x,seen) for x in filteredRoots)))
+        k=list(filteredRoots)
+        return " & ".join(list((self.establishRule(x,seen) for x in k)))
 
     #Take a node and establish it as a predicate function, with its arguments being the verb/nodes arguments.
     def establishRule(self,root,seen):

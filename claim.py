@@ -1,10 +1,22 @@
+import time
+
 from graphviz import Digraph, Source
 import networkx as nx
 from pydot import graph_from_dot_data
 from logic import KnowledgeBase, getSpanCoref
 
-def getEdgeStyle(label):
-    if label in ['ARGM-MOD', 'AND', 'OR', 'IF']:
+with open('adverbStop.txt','r') as stopRead:
+    stopAdv = []
+    for l in stopRead.readlines():
+        stopAdv.append(l.replace('\n',''))
+
+grammaticalTAG = ["CC", "DT", "EX", "IN", "PDT", "SP", "TO", "UH", "WDT", "WP", "WP$", "WRB"]
+grammaticalPOS = ['PUNCT', 'SYM', 'X']
+
+def getEdgeStyle(label, span):
+    if label in ['RARG0','AND', 'OR', 'IF', 'ARGM-DIS'] \
+            or (label == 'ARGM-ADV' and span.lower_ in stopAdv)\
+            or 'R-' in label and all((tok.pos_ in grammaticalPOS or tok.tag_ in grammaticalTAG) for tok in span):
         return 'dotted'
     else:
         return 'solid'
@@ -67,7 +79,7 @@ class docClaim:
 
         # Takes a list of OIE subclaims, note that these are not the same as subclaims obtained from the graph.
         #To convert, need to form the abstract meaning representation graph:
-        self.graph = self.generateCG(docIn._.OIEs, True)
+        self.graph = self.generateCG(docIn._.OIEs)
 
         #...then extract the subclaims from the graph.
         self.subclaims = self.extractSubclaims()
@@ -87,7 +99,6 @@ class docClaim:
 
     #Create graph relating extracted arguments, outputting it if requested.
     def generateCG(self,OIEsubclaims, output=False):
-        output=True
         #The graph is directed as all edges are either implication or property-of relations. Use strict Digraphs to
         #prevent any duplicate edges.
         G = Digraph(strict=True,format='pdf')
@@ -112,7 +123,7 @@ class docClaim:
                 if argK != 'V':
                     #Create a node for each argument, and a link to its respective verb labelled by its arg type.
                     G.node(self.argID(argV), argV.text + "/" + str(argV.ents))
-                    G.edge(self.argID(argV), self.argID(root), label=argK.replace('-', 'x'), style=getEdgeStyle(argK))
+                    G.edge(self.argID(argV), self.argID(root), label=argK.replace('-', 'x'), style=getEdgeStyle(argK,argV))
                     # Replace any '-' with 'x' as '-' is a keyword for networkx, but is output by allennlp. This label
                     #has no usage past displaying this output.
 
@@ -150,7 +161,7 @@ class docClaim:
         for edge in self.doc._.ConnectiveEdges:
             G.node(self.argID(edge.start), edge.start.text)
             G.node(self.argID(edge.end), edge.end.text)
-            G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType))
+            G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType, edge.end))
 
             if edge.connType == 'IF':
                 raise NotImplementedError
@@ -198,6 +209,13 @@ class docClaim:
     def extractSubclaims(self):
         #Convert graphviz to networkx.
         G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
+        #print(G.edges(data=True))
+
+        """dot = nx.drawing.nx_pydot.to_pydot(G)
+        s = Source(dot, filename='fisht.gv', format='pdf')
+        time.sleep(0.5)
+        s.view()"""
+
         claimsList = []
         subtrees = []
 
@@ -226,11 +244,17 @@ class docClaim:
             #strictly a 'tree').
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
             removedEdges=[]
-
+            removedNodes=[]
             #Outbound edges from roots are nearly always erroneous, so they are removed as soon as possible:
+            #Also remove any cases of nodes that have entirely dashed input.
             for j in relRoots:
                 for i in sc.out_edges(j):
                     removedEdges.append((i[0],i[1]))
+
+                for i2 in sc.nodes():
+                    if len(sc.in_edges(i2)) and all(x[2].get('style','') == 'dotted' for x in sc.in_edges(i2,data=True)):
+                        removedNodes.append(i2)
+            sc.remove_nodes_from(removedNodes)
             sc.remove_edges_from(removedEdges)
             claimsList.append(Claim(self, sc, relRoots))
 

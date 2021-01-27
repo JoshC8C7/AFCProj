@@ -4,6 +4,7 @@ from newspaper.utils import BeautifulSoup
 import pickle
 import os
 import time
+from spacy.pipeline import Sentencizer
 
 
 GOOGLE_API_KEY = 'AIzaSyCpq7_EUObEz3azL3CrkZwK7OUIASMqLsA'
@@ -12,6 +13,7 @@ BING_S1_KEY = 'fb85fa996ee84161b15d2f79186cd405'
 
 CACHE_FILE='data/SearchCache.pickle'
 SELECTED_SEARCH='bingFree'
+sentencizer = Sentencizer()
 
 if os.path.exists(CACHE_FILE):
     with open(CACHE_FILE, 'rb') as cache:
@@ -72,15 +74,13 @@ def nlpFeed(t):
                     raise ArticleException
                 soup = BeautifulSoup(article.content, 'html.parser')
                 body = ' '.join(x.text for x in soup.findAll('p'))
-                for a in body.split('. '):
-                    sources.add(a)
+                sources.add(body)
 
             else:
-                article = Article(url,config=config)
+                article = Article(url,config=config, language='en')
                 article.download()
                 article.parse()
-                for a in article.text.split('. '):
-                    sources.add(a)
+                sources.add(article.text)
         except ArticleException:
             print("Couldn't fetch: ", url)
     dumpToCache()

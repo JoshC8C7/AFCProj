@@ -18,7 +18,7 @@ def oiePipe(doc):
         # Drop extracted relations that don't have a verb and at least 1 numbered argument.
         if len(oiespans) < 2 or 'V' not in oiespans or \
                 all(x not in oiespans for x in ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']) > 0:
-            print("axing ", oiespans)
+            #print("axing ", oiespans)
             continue
         #print(oiespans['V'], " ",e['frame'], " ", e['frame_score'])
         frames[oiespans['V']] = e['frame']

@@ -11,7 +11,7 @@ class Connective:
     start = None
     end = None
     note = None
-    colours={'ARG0':'black','IF':'crimson','AND':'cyan','OR':'cyan'}
+    colours={'ARG0':'black','IF':'crimson','AND':'cyan','OR':'cyan','RARG0':'blue'}
 
     def __init__(self,connType,start,end,note=None):
         self.connType=connType
@@ -38,19 +38,19 @@ def extractConnectives(doc):
             while parent.dep_ == 'conj':
                 parent = parent.head
             if parent.head.pos_ == "VERB":
-                print(" NEW EDGE: ", nc.root, "-ARG0>", parent.head)
-                edges.append(Connective('ARG0',nc,Span(doc,parent.head.i,parent.head.i+1),'ARG0xE1'))
+                #print(" NEW EDGE: ", nc.root, "-ARG0>", parent.head)
+                edges.append(Connective('RARG0',nc,Span(doc,parent.head.i,parent.head.i+1),'ARG0xE1'))
 
     for tok in doc:
         # Edge #2 -> and
         if tok.pos_ == "VERB" and tok.dep_ == "conj" and tok.head.pos_=="VERB" and 'or' not in doc[min(tok.i,tok.head.i):max(tok.i,tok.head.i)+1].text:
-            print("NEW EDGE: ", tok, "--and-->", tok.head)
+            #print("NEW EDGE: ", tok, "--and-->", tok.head)
             edges.append(Connective('AND',Span(doc,tok.i,tok.i+1),Span(doc,tok.head.i,tok.head.i+1),'AND-E2'))
             if not any(child.dep_ in subjects for child in tok.children):
                 for pchild in tok.head.children:
                     if pchild != tok and pchild.dep_ in subjects:
                         print("ADOPT SUBJ", pchild, "-ARG0->", tok)
-                        edges.append(Connective('ARG0',Span(doc,pchild.i,pchild.i+1),Span(doc,tok.i,tok.i+1),'ARG0xE2xADOPTxSUBJ'))
+                        edges.append(Connective('RARG0',Span(doc,pchild.i,pchild.i+1),Span(doc,tok.i,tok.i+1),'ARG0xE2xADOPTxSUBJ'))
 
         #Edge #3 -> if
         if tok.lower_ == 'if' and tok.head.pos_ in ["VERB","AUX"]:
@@ -59,9 +59,9 @@ def extractConnectives(doc):
                 effect = list(x for x in tok.head.head.subtree if x not in condition)
             if effect is not None:
                 condition.remove(tok)
-                print("NEW EDGE: ", "IF: ", condition, "THEN:",effect)
-                print(Span(doc,condition[0].i,condition[-1].i+1))
-                print(Span(doc,effect[0].i,effect[-1].i+1))
+                #print("NEW EDGE: ", "IF: ", condition, "THEN:",effect)
+                #print(Span(doc,condition[0].i,condition[-1].i+1))
+                #print(Span(doc,effect[0].i,effect[-1].i+1))
                 edges.append(Connective('IF',Span(doc,condition[0].i,condition[-1].i+1),Span(doc,effect[0].i,effect[-1].i+1),'IFxsourcexTHENxdestxE3'))
 
 
@@ -69,7 +69,7 @@ def extractConnectives(doc):
         if tok.lower_ == 'or':
             for child in tok.head.children:
                 if child.dep_ == 'conj' and child.pos_ == 'VERB' and tok.head.pos_ == 'VERB':  #child and tok.head must both be verbs
-                    print("NEW EDGE", tok.head, '-or->', child)
+                    #print("NEW EDGE", tok.head, '-or->', child)
                     edges.append(Connective('OR',Span(doc,tok.head.i,tok.head.i+1),Span(doc,child.i,child.i+1),'ORxE4'))
                     break
 
