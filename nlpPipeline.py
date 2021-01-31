@@ -39,6 +39,7 @@ print("..")
 Doc.set_extension("Uvis", default={})
 Doc.set_extension("OIEs", default={})
 Doc.set_extension("ConnectiveEdges", default=[])
+Doc.set_extension("rootDate",default='')
 # Run connective extractor over input text and store result in doc._.extract_connectives.
 neuralcoref.add_to_pipe(nlp)
 nlp.add_pipe(oiePipe,name='oie',last=True)
@@ -47,8 +48,14 @@ nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")
 print("Models Loaded")
 
-def batchProc(statementSet):
-    docs = list(nlp.pipe(list(statementSet)))
+def batchProc(statements,dateMap):
+    #See 25 - http://assets.datacamp.com/production/course_8392/slides/chapter3.pdf
+    docs = []
+    inputData = list(zip(statements,({'date':dateMap[s]} for s in statements)))
+    print(inputData)
+    for doc, context in nlp.pipe(inputData,as_tuples=True):
+        doc._.rootDate = context['date']
+        docs.append(doc)
     return docs
 
 def tags2spans(tags,docIn):

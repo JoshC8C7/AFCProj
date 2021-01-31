@@ -5,11 +5,11 @@ import pickle
 import os
 import time
 from spacy.pipeline import Sentencizer
+import tokens
 
-
-GOOGLE_API_KEY = 'AIzaSyCpq7_EUObEz3azL3CrkZwK7OUIASMqLsA'
-BING_FREE_KEY = 'e5da3b0fd59a4161ad4aac8b8c5535b0'
-BING_S1_KEY = 'fb85fa996ee84161b15d2f79186cd405'
+BING_FREE_KEY = tokens.BING_FREE_KEY
+GOOGLE_API_KEY = tokens.GOOGLE_API_KEY
+BING_S1_KEY = tokens.BING_S1_KEY
 
 CACHE_FILE='data/SearchCache.pickle'
 SELECTED_SEARCH='bingFree'

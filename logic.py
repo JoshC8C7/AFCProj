@@ -31,7 +31,7 @@ class KnowledgeBase():
         queries=[]
         entities=[]
         ncs=[]
-        newNCs=[]
+        newNCs=set()
         if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
@@ -57,20 +57,22 @@ class KnowledgeBase():
                 corefSubbedSpans.append(''.join((tok.text_with_ws if type(tok) == Token else tok) for tok in newSpan))
             queries.append(' '.join(corefSubbedSpans).replace('  ',' ').replace(" 's","'s"))
 
-            newNCs = []
-            for val in ncs:
+            for val in ncs+entities:
                 newNc=[]
                 for tok in val:
-                    if tok.tag_ not in claim.grammaticalTAG + ['PRP','PRP$'] and tok.pos_ not in claim.grammaticalPOS:
+                    if tok.tag_ not in claim.grammaticalTAG + ['PRP','PRP$']:
                         newNc.append(tok)
                     else:
                         print("Dropping:",tok)
                 if newNc:
-                    newNCs.append(''.join(tok.text_with_ws for tok in newNc))
+                    appText = ''.join(tok.text_with_ws for tok in newNc)
+                    if appText[-1] == " ":
+                        appText=appText[:-1]
+                    newNCs.add(appText)
 
         #print("ST: ", self.searchTerms, " QU:", queries)y
 
-        return queries, list(x.text for x in entities), newNCs
+        return queries, newNCs
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
@@ -96,7 +98,7 @@ class KnowledgeBase():
         return retVal
 
     def addToKb(self,text):
-        #print("adding to kb ", text)
+        print("adding to kb ", text)
         self.kb.append(expr.fromstring(text))
         return
 
@@ -113,12 +115,44 @@ class KnowledgeBase():
         #FOR MODIFIERS - form a new term wrapping the verb in them e.g. starting with launch(fbi, investigation) if it happened on tuesday, we add '& when(launch(fbi,investigation), tuesday))'
         #todo cyan and red nodes?
         if len(self.roots) ==0:
-            print("No roots")
+            #print("No roots")
             return
         #Create the root implication as the conjunction of the verbs that feed into the root.
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
+        print("//////////////////////////////")
         return
+
+
+    def temporalReasoning(self,span):
+        #print("Relative date:", span.doc._.rootDate)
+        # Temporal reasoning imports
+        from dateutil.relativedelta import relativedelta, MO
+
+        from datetime import timedelta
+        import dateutil.parser as parser
+
+        if len(span.ents) + len(list(span.noun_chunks)) == 0 and span[0].tag_ == 'RB':
+            print("OUT:", span, "  ", span[0].tag_, span[0].dep_)
+            return None
+
+        print(span.doc.text)
+        date=None
+        if span.doc._.rootDate is not None:
+            try:
+                date = parser.parse(span.doc._.rootDate)
+            except ValueError:
+                pass
+
+        #todo if before - argtype is BEFORE(x, resolvedDate) rather than TMP.
+        # So just set the modtype to BEFORE, x stays as the verb-being-modified, and the value is the arg text, and do
+        #relative date res if its a leaf - no need to establish furhter trees, its done later
+
+        return None
+
+
+
+
 
     #For multiple verbs feeding one argument, the argument is implied by the conjunction of the subtrees rooted at the verbs
     #So to establish an argument which has incoming edges, we must establish all incoming edges.
@@ -127,36 +161,37 @@ class KnowledgeBase():
         k=list(filteredRoots)
         return " & ".join(list((self.establishRule(x,seen) for x in k)))
 
-    #Take a node and establish it as a predicate function, with its arguments being the verb/nodes arguments.
+    #Take a node and establish it as a predicate function, with its arguments being the verb (node)'s arguments.
     def establishRule(self,root,seen):
         seen.add(root)
+        predNeg = False
         argList = []
         modifiers = []
+        #Find all edges coming into the root verb.
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
-            #Find the core args to create the predicate
-            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core']:
+            #Find the core args to create the predicate. Modifiers are not permitted in the predicate at this point.
+            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core'] and 'ARGM' not in edge[2].get('label',''):
                 argList.append(edge[0])
-        #Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
-        predicate = (root) + '(' + ','.join(argList) + ')'
 
         if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
             self.searchTerms.append((root,argList))
 
         #Now check for any non-leaf entries or modifiers
         count=0
-        for edge in incomingEdges:
+        for edge in incomingEdges: #Arg0, Arg1 etc for the root verb.
             if edge[2].get('style','') == 'dotted':
                 continue
 
-            # if not a leaf argument (i.e. has incoming edges:)
-            if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
-                upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)
+            # Is argx an internal node (i.e. has incoming violet/verb-subpart edges:) - NOT modifiers (although they can have incoming violet edges, this is handled later)
+            #If so, need to handle the subtree rooted at it (i.e. recurse deeper)
+            if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and 'ARGM' not in edge[2].get('label','') and edge[0] not in seen: #Looking at an arg, we're just checking if it has at least 1 violet edge in. Modifiers are not args.
+                upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen) #Conjestablish over all incoming violet edges (although usually is just 1)
 
                 #Fill in all bar the (count)th arguments with free variables:
                 miniArgList = []
                 freeVar = self.getFreeVar()
-                for i in range(0,len(incomingEdges)):
+                for i in range(0,len(list(x for x in incomingEdges if 'ARGM' not in x[2].get('label','')))):
                     if i == count:
                         miniArgList.append((edge[0]))
                     else:
@@ -165,21 +200,49 @@ class KnowledgeBase():
                 self.addToKb(upVal + ' -> ' + impliedArg)
 
             elif self.modOrCore(edge) == 'neg':
-                predicate = '-' + predicate
+                predNeg = True
 
             # Else if it's a modifier
             elif self.modOrCore(edge) == 'mod':
-                #print("MODIFIER ", edge[2]['label']+'('+predicate+','+str(edge[0])+')')
-                modifiers.append(edge[2]['label']+'('+predicate+','+(edge[0])+')')
+                modType = edge[2]['label'].replace("ARGMx","")
+                modValID = edge[0]
+                modVal = self.argBaseC[modValID].span
+
+                if modType == 'TMP':
+                    if 'never' in modVal.lower_:
+                        predNeg = True
+                    else:
+                        #send to temporal reasoning
+                        #print("Temporal: ",modVal, list(modVal.noun_chunks), modVal.ents)
+                        ret = self.temporalReasoning(modVal)
+                        if ret is not None:
+                            modifiers.append(ret)
+                elif modType in ['MOD','ADV','PRP', 'CAU', 'LOC']:
+                    modifiers.append((modType, modValID))
+                elif modType in ['DIR', 'PRD','MNR']:
+                    if not(modType == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in modVal)):
+                        argList.append(modValID)
+
+                #todo check if the modifier node roots a tree, and then do the relevant as above - make sure it implies the right modType (e.g. could be BEFORE)
+                #print("MODIFIER ", modType+'('+str(argList)+','+str(modValID)+')')
+
 
             #Else its a leaf, so just continue without adding any extra rules or modifier
 
-            #Increase the count as we move to the count-th argument
-            count+=1
+            #Increase the count as we move to the count-th argument (i.e. exclude Modifiers -
+            # theoretically this shouldn't matter as count falls out of use after numbered arguments, which come first)
+            if 'ARGM' not in edge[2].get('label',''):
+                count+=1
+
+        # Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
+        predicate = root + '(' + ','.join(argList) + ')'
+        if predNeg:
+            predicate = '-'+predicate
 
         #Add the predicates
         for m in modifiers:
-            predicate += " & " + m
+            modifierText = m[0] + '(' + predicate + ',' + m[1] + ')'
+            predicate += " & " + modifierText
 
         return predicate
 

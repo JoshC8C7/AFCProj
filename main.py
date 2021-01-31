@@ -7,10 +7,11 @@ from claim import docClaim
 from webcrawl import nlpFeed, dumpToCache
 
 
-def main(name=None):
+def politihopInput():
 
+    dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(200)
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t')
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -26,10 +27,22 @@ def main(name=None):
             else:
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
-        if (False or 'Kobe' in s) and any(x !=" " for x in s):
+        #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
+        if True or 'upper bracket' in s:
             statementSet.add(s)
+        dateMap[s] = None
 
-    docs = batchProc(statementSet)
+    return statementSet, dateMap
+
+
+DATA_IMPORT = {'politihop':politihopInput}
+
+def main(name='politihop'):
+
+    inputFunc = DATA_IMPORT[name]
+
+    statementSet, dateMap = inputFunc()
+    docs = batchProc(statementSet,dateMap)
 
     for doc in docs:
 
@@ -37,22 +50,18 @@ def main(name=None):
             tlClaim = docClaim(doc)
         except NotImplementedError:
             continue
-        for subclaim in tlClaim.subclaims:
-            queries, entities, ncs = subclaim.kb.prepSearch()
-            matchSet = set()
-            matchSet.update(entities)
-            matchSet.update(ncs)
-
+        """for subclaim in tlClaim.subclaims:
+            queries, ncs = subclaim.kb.prepSearch()
             sources=[]
             for q in queries:
                 sources.extend(nlpFeed(q))
             dumpToCache()
-            evidence.receiveDoc(queries,matchSet,sources)
+            evidence.processEvidence(subclaim,ncs,sources)
             input("next...")
-            #newData = batchProc(sources)"""
+            #newData = batchProc(sources)
 
 
-            """for doc in newData:
+            for doc in newData:
                 try:
                     tlEv = docClaim(doc)
                 except NotImplementedError:
@@ -65,7 +74,7 @@ def main(name=None):
 
 
 
-        print("...............")
+        #print("...............")
 
 if __name__ == '__main__':
     main()

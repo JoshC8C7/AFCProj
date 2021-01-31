@@ -14,7 +14,8 @@ grammaticalTAG = ["CC", "DT", "EX", "IN", "PDT", "SP", "TO", "UH", "WDT", "WP", 
 grammaticalPOS = ['PUNCT', 'SYM', 'X']
 
 def getEdgeStyle(label, span):
-    if label in ['RARG0','AND', 'OR', 'IF', 'ARGM-DIS'] \
+    #The below carry either no information or are not present in the dataset in sufficient numbers to develop rules for them.
+    if label in ['RARG0','AND', 'OR', 'IF', 'ARGM-DIS','ARGM-LVB','ARGM-GOL','ARGM-EXT','ARGM-ADJ','ARGM-REC'] \
             or (label == 'ARGM-ADV' and span.lower_ in stopAdv)\
             or 'R-' in label and all((tok.pos_ in grammaticalPOS or tok.tag_ in grammaticalTAG) for tok in span):
         return 'dotted'
@@ -122,7 +123,7 @@ class docClaim:
             for argK, argV in claim.items():
                 if argK != 'V':
                     #Create a node for each argument, and a link to its respective verb labelled by its arg type.
-                    G.node(self.argID(argV), argV.text + "/" + str(argV.ents))
+                    G.node(self.argID(argV), argV.text + "/" + str(argV.ents) + "/" + str(list(argV.noun_chunks)))
                     G.edge(self.argID(argV), self.argID(root), label=argK.replace('-', 'x'), style=getEdgeStyle(argK,argV))
                     # Replace any '-' with 'x' as '-' is a keyword for networkx, but is output by allennlp. This label
                     #has no usage past displaying this output.
@@ -211,10 +212,10 @@ class docClaim:
         G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
         #print(G.edges(data=True))
 
-        """dot = nx.drawing.nx_pydot.to_pydot(G)
+        dot = nx.drawing.nx_pydot.to_pydot(G)
         s = Source(dot, filename='fisht.gv', format='pdf')
         time.sleep(0.5)
-        s.view()"""
+        #s.view()
 
         claimsList = []
         subtrees = []
@@ -238,8 +239,13 @@ class docClaim:
         #Create a Claim object for each component.
         for sc in subtrees:
             dot=nx.drawing.nx_pydot.to_pydot(subtrees[0])
-            s=Source(dot,filename='fish2.gv',format='pdf')
-            #s.view()
+            for x in sc.edges(data=True):
+                if not x[2] is int:
+                    if x[2].get("label","") in ['ARGMxTMP']:
+                        s = Source(dot, filename='fish2.gv', format='pdf')
+                        s.view()
+                        break
+
             #take all roots that form this subclaim (could be multiple if they're connected - this makes the 'tree' not
             #strictly a 'tree').
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
