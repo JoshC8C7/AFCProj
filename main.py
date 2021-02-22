@@ -11,7 +11,7 @@ def politihopInput():
 
     dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t')
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(10)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -28,7 +28,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if True or 'upper bracket' in s:
+        if False or 'Bolton' in s:
             statementSet.add(s)
         dateMap[s] = None
 
@@ -50,15 +50,16 @@ def main(name='politihop'):
             tlClaim = docClaim(doc)
         except NotImplementedError:
             continue
-        """for subclaim in tlClaim.subclaims:
+        for subclaim in tlClaim.subclaims:
             queries, ncs = subclaim.kb.prepSearch()
+            print(queries,subclaim.doc)
             sources=[]
             for q in queries:
                 sources.extend(nlpFeed(q))
             dumpToCache()
             evidence.processEvidence(subclaim,ncs,sources)
-            input("next...")
-            #newData = batchProc(sources)
+            #input("next...")
+            """#newData = batchProc(sources)
 
 
             for doc in newData:

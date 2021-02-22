@@ -1,7 +1,11 @@
 import spacy
 from fuzzysearch import find_near_matches
+from nltk.corpus import wordnet as wn
+import networkx as nx
+from textacy.similarity import levenshtein
 
-
+import json
+import nlpPipeline
 nlp1 = spacy.load('en_core_web_lg')
 from spacy.lang.en import English
 PARTIAL_TOLERANCE = 90
@@ -10,25 +14,90 @@ MATCH_SENSITIVITY = 1 #Decreasing this may increase accuracy, but will signifcan
 nlp = English()
 nlp.add_pipe(nlp.create_pipe("sentencizer"))
 
+with open('data/pb2wn.json','r') as inFile:
+    pb2wn = json.load(inFile)
 
 def processEvidence(subclaim, matchSet, sources):
-    from nlpPipeline import batchProc
     evidence = receiveDoc(matchSet,sources)
-    print("EV", evidence)
-    evDocs = batchProc(evidence)
-    oieAccum=[]
+    evDocs = nlpPipeline.batchProc(evidence,{},matchSet)
+    soughtV = set()
+
+    for x in subclaim.kb.argBaseC.values():
+        if x.uvi is not None:
+            soughtV.add(x)
+
     for doc in evDocs:
+        oieAccum = {}
+        uviMatchedOies = {}
         for oie in doc._.OIEs:
-            for arg in oie.values():
-                if any(ent.text in matchSet for ent in arg.ents):
-                    oieAccum.append(oie)
-                    break
+            oieAccum[oie['V']] = oie
+        if oieAccum:
+            proceeding = uviMatch(soughtV,oieAccum, doc._.Uvis)
+            if proceeding:
+                #print(subclaim.doc, "-> ", doc)
+                for p in proceeding:
+                    #Need to retrieve the OIE from the incoming, and the node or whatever for the new one.
+                    print("OIE from incoming:", p[1])
+                    verbNode = subclaim.kb.getEnabledArgBaseC()[p[0]]
+                    if verbNode is not None:
+                        uviMatchedOies[verbNode] = p[1]
+            nounMatch(uviMatchedOies,subclaim)
 
-    for x in oieAccum:
-        print(x)
+                #Run node inference
+                #form the logic to dump it in.
 
-    #Now send the evidence docs through the separate logic pipeline, feeding into the KB of subclaim,
-    #then return to main.py to evaluate what extra evidence is needed.
+        else:
+            print("Miss")
+
+#Takes oiesdict (key = the argNode corresponding to the matched verb, value = the oie it matched with) and subclaim.
+def nounMatch(oiesDict, subclaim):
+    substitutedOIES = []
+    for ek, ev in oiesDict.items():
+        substitutedDict = ev.copy()
+        for neighb in subclaim.graph.in_edges(nbunch=ek.ID):
+            span = subclaim.kb.getEnabledArgBaseC().get(neighb[0], None)
+            if span is not None:
+                for fk, fv in ev.items():
+                    if fv.similarity(span.span) > 0.5 and any(x.similarity(y) > 0.5 for x in fv.ents for y in span.span.ents):
+                        substitutedDict[fk] = span.span
+                        print(fk, "->",span.span)
+
+        if substitutedDict != ev:
+            substitutedOIES.append(substitutedDict)
+
+# todo args connected to this argbaseC.
+
+
+#Takes ALL existing nodes (before looking at all their UVis), and ALL incoming oies (ditto), and look for any uvi matches.
+#Incoming oies are in a dict with key = verb span, value = ?
+#Returns pairs of (ID of existing node that matches uvi, incoming OIE which matched it)
+def uviMatch(existing, incoming, incomingUviMap):
+    oieMatches = []
+    seen = set()
+    for i in existing:
+        for jk, j in incoming.items():
+            im = pb2wn.get(i.uvi,None)
+            jm = pb2wn.get(incomingUviMap[jk],None)
+            if im is not None and jm is not None:
+                for imm in im:
+                    try:
+                        wni = wn.synset(imm)
+                    except:
+                        continue
+                    for jmm in jm:
+                        if jmm not in seen:
+                            seen.add(jmm)
+                            try:
+                                wnj = wn.synset(jmm)
+                            except:
+                                continue
+                            sim = (wn.path_similarity(wni,wnj))
+                            #print(wni,wnj,sim)
+                            if sim > 0.5:
+                                oieMatches.append((i.ID,j))
+
+    return oieMatches
+
 
 def receiveDoc(matchSet, sources):
     sentences,matched = [], {}

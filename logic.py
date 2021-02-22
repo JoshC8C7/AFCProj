@@ -18,20 +18,29 @@ class KnowledgeBase():
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
     other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
 
-    def __init__(self, claimIn, roots,argBase):
+    def __init__(self, claimIn, roots,tlClaim):
         self.claimG = claimIn
         self.roots = roots
-        self.argBaseC = argBase
+        self.argBaseC = tlClaim.argBaseC
         self.kb = []
         self.freeVariableCounter = 0
         self.searchTerms=[]
+        self.argFunc = tlClaim.argID
         self.graph2rules()
+
+    def getEnabledArgBaseC(self):
+        filtered = {}
+        for ik,iv in self.argBaseC.items():
+            if iv.enabled:
+                filtered[ik] = iv
+        return filtered
 
     def prepSearch(self):
         queries=[]
         entities=[]
         ncs=[]
         newNCs=set()
+        print(self.searchTerms)
         if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
@@ -62,8 +71,8 @@ class KnowledgeBase():
                 for tok in val:
                     if tok.tag_ not in claim.grammaticalTAG + ['PRP','PRP$']:
                         newNc.append(tok)
-                    else:
-                        print("Dropping:",tok)
+                    #else:
+                        #print("Dropping:",tok)
                 if newNc:
                     appText = ''.join(tok.text_with_ws for tok in newNc)
                     if appText[-1] == " ":
@@ -78,7 +87,7 @@ class KnowledgeBase():
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
     #leads to a modifier (ARGM-) or a leaf argument ('other').
     def modOrCore(self,edge):
-        if len(list(x for x in self.claimG.in_edges(nbunch=edge[0],data=True) if x[2].get('style','') != 'dotted')):
+        if len(list(x for x in self.claimG.in_edges(nbunch=edge[0],data=True) if x[2].get('style','') != 'dotted')) and 'ARGM' not in edge[2].get('label',''):
             return 'coreInternal'
         if edge[2].get('label','') in self.core:
             return 'core'
@@ -98,7 +107,7 @@ class KnowledgeBase():
         return retVal
 
     def addToKb(self,text):
-        print("adding to kb ", text)
+        #print("adding to kb ", text)
         self.kb.append(expr.fromstring(text))
         return
 
@@ -124,7 +133,7 @@ class KnowledgeBase():
         return
 
 
-    def temporalReasoning(self,span):
+    def temporalReasoning(self,span, modID):
         #print("Relative date:", span.doc._.rootDate)
         # Temporal reasoning imports
         from dateutil.relativedelta import relativedelta, MO
@@ -133,7 +142,7 @@ class KnowledgeBase():
         import dateutil.parser as parser
 
         if len(span.ents) + len(list(span.noun_chunks)) == 0 and span[0].tag_ == 'RB':
-            print("OUT:", span, "  ", span[0].tag_, span[0].dep_)
+            #print("OUT:", span, "  ", span[0].tag_, span[0].dep_)
             return None
 
         print(span.doc.text)
@@ -144,11 +153,32 @@ class KnowledgeBase():
             except ValueError:
                 pass
 
-        #todo if before - argtype is BEFORE(x, resolvedDate) rather than TMP.
-        # So just set the modtype to BEFORE, x stays as the verb-being-modified, and the value is the arg text, and do
-        #relative date res if its a leaf - no need to establish furhter trees, its done later
+        modType='TMP'
+        if any(x in span.lower_ for x in ['before', 'until', 'prior to']):
+            modType = 'BEFORE'
+        elif any(x in span.lower_ for x in ['during','whilst','when','over']):
+            modType = 'DURING'
+        elif any(x in span.lower_ for x in ['after','since','subsequent']):
+            modType = 'AFTER'
 
-        return None
+        #Check if arg is an internal node:
+        if self.claimG.in_edges(nbunch=modID):
+            return (modType,modID)
+
+        #Else do temporal reasoning:
+        if date is None:
+            for ent in span.ents:
+                if ent.label_ in ["TIME","DATE"]:
+
+                    try:
+                        date = parser.parse(ent.text, dayfirst=True) #todo this needs to return a span so the argId works - it should just take the id of what its replacing or something
+                    except ValueError:
+                        date = ent
+                    #print(ent.text, "/ ", ent.label_, "/",resolvedDate)
+        else:
+            raise NotImplementedError
+        return
+        return (modType, self.argFunc(date))
 
 
 
@@ -163,6 +193,7 @@ class KnowledgeBase():
 
     #Take a node and establish it as a predicate function, with its arguments being the verb (node)'s arguments.
     def establishRule(self,root,seen):
+        self.argBaseC[root].enable()
         seen.add(root)
         predNeg = False
         argList = []
@@ -171,11 +202,15 @@ class KnowledgeBase():
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
             #Find the core args to create the predicate. Modifiers are not permitted in the predicate at this point.
-            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core'] and 'ARGM' not in edge[2].get('label',''):
+            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core']:
                 argList.append(edge[0])
+                self.argBaseC[edge[0]].enable()
 
-        if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
+        #if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
+        if len(argList) > 1:
             self.searchTerms.append((root,argList))
+        else:
+            print("Skipsies",root,argList)
 
         #Now check for any non-leaf entries or modifiers
         count=0
@@ -194,6 +229,7 @@ class KnowledgeBase():
                 for i in range(0,len(list(x for x in incomingEdges if 'ARGM' not in x[2].get('label','')))):
                     if i == count:
                         miniArgList.append((edge[0]))
+                        self.argBaseC[edge[0]].enable()
                     else:
                         miniArgList.append(freeVar + str(i))
                 impliedArg = (root) + '(' + ",".join(miniArgList)+")"
@@ -204,27 +240,39 @@ class KnowledgeBase():
 
             # Else if it's a modifier
             elif self.modOrCore(edge) == 'mod':
+                #print("mod", edge)
                 modType = edge[2]['label'].replace("ARGMx","")
                 modValID = edge[0]
                 modVal = self.argBaseC[modValID].span
 
-                if modType == 'TMP':
+                """if modType == 'TMP':
                     if 'never' in modVal.lower_:
                         predNeg = True
                     else:
                         #send to temporal reasoning
                         #print("Temporal: ",modVal, list(modVal.noun_chunks), modVal.ents)
-                        ret = self.temporalReasoning(modVal)
+                        ret = self.temporalReasoning(modVal,modValID)
+                        print("RET",ret)
                         if ret is not None:
                             modifiers.append(ret)
-                elif modType in ['MOD','ADV','PRP', 'CAU', 'LOC']:
+                            modType = ret[0]
+                            modValID = ret[1]"""
+                if modType in ['TMP']+['MOD','ADV','PRP', 'CAU', 'LOC']:
                     modifiers.append((modType, modValID))
+                    self.argBaseC[modValID].enable()
                 elif modType in ['DIR', 'PRD','MNR']:
                     if not(modType == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in modVal)):
                         argList.append(modValID)
+                        self.argBaseC[modValID].enable()
 
-                #todo check if the modifier node roots a tree, and then do the relevant as above - make sure it implies the right modType (e.g. could be BEFORE)
+
                 #print("MODIFIER ", modType+'('+str(argList)+','+str(modValID)+')')
+
+                #If the modifier has incoming edges from verbs that root subtrees (i.e. the modifier contains 1 or more verbs):
+                if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
+                    upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)  # Conjestablish over all incoming violet edges (although usually is just 1)
+                    impliedArg = modType + '(' +self.getFreeVar()+','+ modValID + ')' #The free value here represents the predicate.
+                    self.addToKb(upVal + ' -> ' + impliedArg)
 
 
             #Else its a leaf, so just continue without adding any extra rules or modifier
@@ -240,8 +288,9 @@ class KnowledgeBase():
             predicate = '-'+predicate
 
         #Add the predicates
+        oldPred = predicate
         for m in modifiers:
-            modifierText = m[0] + '(' + predicate + ',' + m[1] + ')'
+            modifierText = m[0] + '(' + oldPred + ',' + m[1] + ')'
             predicate += " & " + modifierText
 
         return predicate

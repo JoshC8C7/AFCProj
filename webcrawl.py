@@ -66,7 +66,7 @@ def nlpFeed(t):
     config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36'
     urls = searchFetch(t)
     for url in urls:
-        print("////////////// "+url + " ///////////")
+        #print("////////////// "+url + " ///////////")
         try:
             if ('www.bbc' in url):
                 article = requests.get(url)

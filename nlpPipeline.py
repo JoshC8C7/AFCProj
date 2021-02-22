@@ -2,11 +2,19 @@ import spacy
 from spacy.tokens import Doc, Span
 import connectives as con
 from pprint import pprint
+import textacy.similarity as ts
 from transformer_srl import dataset_readers,models,predictors
 import  neuralcoref
 #This is a module rather than a class to enforce singleton behaviour of the models. The nlp model is used across the
 #files and so should be accessible from each module rather than through a single object.
 
+def docUsefullness(doc,miniContext):
+    for i in doc.ents:
+        for j in miniContext:
+            if ts.token_sort_ratio(i.lower_,j.lower()) > 0.5:
+                #print("Proceeding to OIE")
+                return True
+    return False
 
 def oiePipe(doc):
     oie = predictorOIE.predict(doc.text)
@@ -41,21 +49,31 @@ Doc.set_extension("OIEs", default={})
 Doc.set_extension("ConnectiveEdges", default=[])
 Doc.set_extension("rootDate",default='')
 # Run connective extractor over input text and store result in doc._.extract_connectives.
-neuralcoref.add_to_pipe(nlp)
+coref = neuralcoref.NeuralCoref(nlp.vocab)
+nlp.add_pipe(coref, name='neuralcoref')
 nlp.add_pipe(oiePipe,name='oie',last=True)
 nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 
 predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")
 print("Models Loaded")
 
-def batchProc(statements,dateMap):
+
+def batchProc(statements,dateMap, miniContext = None):
     #See 25 - http://assets.datacamp.com/production/course_8392/slides/chapter3.pdf
     docs = []
-    inputData = list(zip(statements,({'date':dateMap[s]} for s in statements)))
-    print(inputData)
-    for doc, context in nlp.pipe(inputData,as_tuples=True):
-        doc._.rootDate = context['date']
-        docs.append(doc)
+    inputData = list(zip(statements,({'date':dateMap.get(s,None)} for s in statements)))
+    #print(inputData)
+    if miniContext is not None:
+        with nlp.disable_pipes(['extract_connectives','tagger','neuralcoref','oie']):
+            for doc, context in nlp.pipe(inputData,as_tuples=True):
+                doc._.rootDate = context['date']
+                if docUsefullness(doc,miniContext):
+                    doc = oiePipe(doc)
+                    docs.append(doc)
+    else:
+        for doc, context in nlp.pipe(inputData, as_tuples=True):
+            doc._.rootDate = context['date']
+            docs.append(doc)
     return docs
 
 def tags2spans(tags,docIn):

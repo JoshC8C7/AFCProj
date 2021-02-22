@@ -41,7 +41,7 @@ class Claim:
         self.doc=tlClaim.doc #spacy Doc - just points to parent TLClaim's doc.
         self.graph = graph
         self.roots=roots
-        self.kb = KnowledgeBase(self.graph, self.roots,tlClaim.argBaseC)
+        self.kb = KnowledgeBase(self.graph, self.roots,tlClaim)
 
 
         return
@@ -57,10 +57,15 @@ class argNode():
         self.ID = ID
         self.uvi = doc._.Uvis.get(span, None)
         self.span = span
+        self.enabled = False
         return
 
-    def __repr__(self):
-        return self.getUviOutput() + " " + self.span.text
+    def enable(self):
+        self.enabled = True
+        return
+
+    def __str__(self):
+        return self.getUviOutput() + " " + self.span.text + "//Enabled:" + str(self.enabled) + " //ID" + self.ID
 
     #Provide verb sense in readable format (if one exists)
     def getUviOutput(self):
@@ -100,6 +105,8 @@ class docClaim:
 
     #Create graph relating extracted arguments, outputting it if requested.
     def generateCG(self,OIEsubclaims, output=False):
+        #output=True
+
         #The graph is directed as all edges are either implication or property-of relations. Use strict Digraphs to
         #prevent any duplicate edges.
         G = Digraph(strict=True,format='pdf')
@@ -190,7 +197,6 @@ class docClaim:
 
         #If visual output requested, then add coref edges determined earlier to a copy of the graph and return that.
         #The returned graph is identical except for nodes created solely as coreference components and the green edges.
-
         if output:
             H = G.copy()
             for node in corefNodes:
@@ -243,7 +249,7 @@ class docClaim:
                 if not x[2] is int:
                     if x[2].get("label","") in ['ARGMxTMP']:
                         s = Source(dot, filename='fish2.gv', format='pdf')
-                        s.view()
+                        #s.view()
                         break
 
             #take all roots that form this subclaim (could be multiple if they're connected - this makes the 'tree' not
