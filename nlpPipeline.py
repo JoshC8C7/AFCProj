@@ -1,4 +1,5 @@
 import spacy
+from spacy.matcher import Matcher
 from spacy.tokens import Doc, Span
 import connectives as con
 from pprint import pprint
@@ -54,8 +55,19 @@ nlp.add_pipe(coref, name='neuralcoref')
 nlp.add_pipe(oiePipe,name='oie',last=True)
 nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 
+matcher = Matcher(nlp.vocab)
+matcher.add("quotes",[[{'ORTH': '"'},{'IS_ASCII': True, 'OP': '*'}]])
+
 predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")
 print("Models Loaded")
+
+def naiveQuotes(doc):
+    matches=matcher(doc)
+    if matches:
+        #print("DROP:", doc)
+        return True
+    else:
+        return False
 
 
 def batchProc(statements,dateMap, miniContext = None):
@@ -64,10 +76,10 @@ def batchProc(statements,dateMap, miniContext = None):
     inputData = list(zip(statements,({'date':dateMap.get(s,None)} for s in statements)))
     #print(inputData)
     if miniContext is not None:
-        with nlp.disable_pipes(['extract_connectives','tagger','neuralcoref','oie']):
+        with nlp.disable_pipes(['extract_connectives','tagger','oie']):
             for doc, context in nlp.pipe(inputData,as_tuples=True):
                 doc._.rootDate = context['date']
-                if docUsefullness(doc,miniContext):
+                if docUsefullness(doc,miniContext) and not naiveQuotes(doc):
                     doc = oiePipe(doc)
                     docs.append(doc)
     else:

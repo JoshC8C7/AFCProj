@@ -1,6 +1,7 @@
+from nltk import Prover9Command, Prover9
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
-from string import ascii_lowercase
+from string import ascii_lowercase, punctuation
 from spacy.tokens.token import Token
 import claim
 
@@ -12,11 +13,15 @@ def getSpanCoref(span):
                 corefSet.add(cf)
     return list(corefSet)
 
+p = Prover9()
+p.config_prover9(binary_location='.')
 class KnowledgeBase():
 
     prover = None
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
     other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
+    c = expr.fromstring('argF(root)')
+    notC=expr.fromstring('-argF(root)')
 
     def __init__(self, claimIn, roots,tlClaim):
         self.claimG = claimIn
@@ -26,7 +31,10 @@ class KnowledgeBase():
         self.freeVariableCounter = 0
         self.searchTerms=[]
         self.argFunc = tlClaim.argID
+        self.kb2 = []
+
         self.graph2rules()
+
 
     def getEnabledArgBaseC(self):
         filtered = {}
@@ -40,7 +48,6 @@ class KnowledgeBase():
         entities=[]
         ncs=[]
         newNCs=set()
-        print(self.searchTerms)
         if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
@@ -81,7 +88,15 @@ class KnowledgeBase():
 
         #print("ST: ", self.searchTerms, " QU:", queries)y
 
-        return queries, newNCs
+        #todo this is a short hack to remove searchterms that are within another one, as to reduce the horrific runtimes.
+        q2=queries.copy()
+        for i in queries:
+            for j in queries:
+                if i in j and i != j:
+                    #print("rem",i," in ",j)
+                    q2.remove(i)
+
+        return q2, newNCs
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
@@ -107,7 +122,7 @@ class KnowledgeBase():
         return retVal
 
     def addToKb(self,text):
-        #print("adding to kb ", text)
+        print("adding to kb ", text)
         self.kb.append(expr.fromstring(text))
         return
 
@@ -127,9 +142,9 @@ class KnowledgeBase():
             #print("No roots")
             return
         #Create the root implication as the conjunction of the verbs that feed into the root.
-        rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
+        rootImpl = self.conjEstablish(self.roots,seen) + ' <-> argF(root)'
         self.addToKb(rootImpl)
-        print("//////////////////////////////")
+        #self.addToKb('argF(root) ->'+ self.conjEstablish(self.roots,seen))
         return
 
 
@@ -145,7 +160,6 @@ class KnowledgeBase():
             #print("OUT:", span, "  ", span[0].tag_, span[0].dep_)
             return None
 
-        print(span.doc.text)
         date=None
         if span.doc._.rootDate is not None:
             try:
@@ -189,11 +203,13 @@ class KnowledgeBase():
     def conjEstablish(self,rootsIn,seen):
         filteredRoots=(y for y in rootsIn if len(self.claimG.in_edges(nbunch=y)) > 0)
         k=list(filteredRoots)
-        return " & ".join(list((self.establishRule(x,seen) for x in k)))
+        inc = list((self.establishRule(x,seen) for x in k))
+        self.kb2.extend(inc)
+        return " & ".join(inc)
 
     #Take a node and establish it as a predicate function, with its arguments being the verb (node)'s arguments.
     def establishRule(self,root,seen):
-        self.argBaseC[root].enable()
+        self.argBaseC[root].enableNode()
         seen.add(root)
         predNeg = False
         argList = []
@@ -204,13 +220,13 @@ class KnowledgeBase():
             #Find the core args to create the predicate. Modifiers are not permitted in the predicate at this point.
             if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core']:
                 argList.append(edge[0])
-                self.argBaseC[edge[0]].enable()
 
         #if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
         if len(argList) > 1:
+            #todo there's some duplication of search terms going on here - see John Bolton
             self.searchTerms.append((root,argList))
-        else:
-            print("Skipsies",root,argList)
+        """        else:
+            print("Skipsies",root,argList)"""
 
         #Now check for any non-leaf entries or modifiers
         count=0
@@ -229,10 +245,10 @@ class KnowledgeBase():
                 for i in range(0,len(list(x for x in incomingEdges if 'ARGM' not in x[2].get('label','')))):
                     if i == count:
                         miniArgList.append((edge[0]))
-                        self.argBaseC[edge[0]].enable()
                     else:
                         miniArgList.append(freeVar + str(i))
-                impliedArg = (root) + '(' + ",".join(miniArgList)+")"
+                impliedArg = (root)+str(len(miniArgList)) + '(' + ",".join(miniArgList)+")"
+                self.kb2.append(impliedArg)
                 self.addToKb(upVal + ' -> ' + impliedArg)
 
             elif self.modOrCore(edge) == 'neg':
@@ -258,12 +274,14 @@ class KnowledgeBase():
                             modType = ret[0]
                             modValID = ret[1]"""
                 if modType in ['TMP']+['MOD','ADV','PRP', 'CAU', 'LOC']:
-                    modifiers.append((modType, modValID))
-                    self.argBaseC[modValID].enable()
+                    if 'never' in modVal.lower_:
+                        predNeg = True
+                    else:
+                        modifiers.append((modType, modValID))
+                        self.argBaseC[modValID].enableNode()
                 elif modType in ['DIR', 'PRD','MNR']:
                     if not(modType == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in modVal)):
                         argList.append(modValID)
-                        self.argBaseC[modValID].enable()
 
 
                 #print("MODIFIER ", modType+'('+str(argList)+','+str(modValID)+')')
@@ -272,6 +290,7 @@ class KnowledgeBase():
                 if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
                     upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)  # Conjestablish over all incoming violet edges (although usually is just 1)
                     impliedArg = modType + '(' +self.getFreeVar()+','+ modValID + ')' #The free value here represents the predicate.
+                    self.kb2.append(impliedArg)
                     self.addToKb(upVal + ' -> ' + impliedArg)
 
 
@@ -283,18 +302,122 @@ class KnowledgeBase():
                 count+=1
 
         # Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
-        predicate = root + '(' + ','.join(argList) + ')'
+        predicate = root + str(len(argList)) + '(' + ','.join(argList) + ')'
+
+        for arg in argList:
+            self.argBaseC[arg].enableNode()
+
+        if predNeg:
+            print("predneg")
+            predicate = '-'+predicate
+
+        #Add the predicates
+        oldPred = predicate
+        for m in modifiers:
+            modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
+            print("modtext",modifierText)
+            predicate += " & " + modifierText
+
+        return predicate
+
+
+
+        #Convert OIE to KB compatible, also enrich supporting data structures sufficiently
+    def OIEStoKB(self,oieList):
+        seen = set()
+        for oie in oieList:
+            toKb = self.OIEtoKB(oie)
+            if toKb is not None and toKb not in seen:
+                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>",oie)
+                seen.add(toKb)
+                self.addToKb(toKb)
+        return
+
+    def OIEtoKB(self,oieUnsorted):
+        verb = oieUnsorted['V']
+        oie = list(sorted(((xk, xv) for xk, xv in oieUnsorted.items() if xk != "V"), key=lambda q: q[0]))
+        #oie in format (argType, value)
+        argList = []
+        modifiers = []
+        predNeg = False
+        for ent in oie:
+            newArg = None
+            argType = ent[0].replace("-","x")
+            if type(ent[1]) is claim.argNode:
+                newArg = ent[1]
+            else:
+                argList
+
+            """else:
+                if claim.getEdgeStyle(ent[0],ent[1]) != 'dotted':
+                    newArg = self.argBaseC[self.argFunc(ent[1],doc=ent[1].doc)]
+                    newArg.enableNode()"""
+            #Assert: newArg = argNode object of argument text, argType = arg type.
+            if newArg is not None:
+                newArg.enableNode()
+                if 'ARGM' not in argType:
+                    argList.append(newArg)
+
+                else:
+                    subtype = argType.replace("ARGMx","")
+                    if subtype == "NEG":
+                        predNeg = True
+                    #todo temporal reasoning
+                    if subtype in ['TMP'] + ['MOD', 'ADV', 'PRP', 'CAU', 'LOC']:
+                        if 'never' in newArg.span.text:
+                            predNeg = True
+                        else:
+                            modifiers.append((argType, newArg.ID))
+                    elif subtype in ['DIR', 'PRD', 'MNR']:
+                        if not (subtype == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in newArg.span)):
+                            argList.append(newArg)
+
+
+        #Add to future search terms pool
+        if len(argList) > 1:
+            self.searchTerms.append((verb, argList))
+
+        # Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
+        predicate = verb.ID + str(len(argList))+'(' + ','.join((x.ID for x in argList)) + ')'
         if predNeg:
             predicate = '-'+predicate
 
         #Add the predicates
         oldPred = predicate
         for m in modifiers:
-            modifierText = m[0] + '(' + oldPred + ',' + m[1] + ')'
+            modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
             predicate += " & " + modifierText
 
-        return predicate
+        if '()' not in predicate:
+            return predicate
+        else:
+            return None
 
+
+    """ def prove(self):
+        rpc = ResolutionProverCommand(self.c, self.kb)
+        return (rpc.prove())
+        #print(rpc.proof())"""
+
+    def prove(self,system='p9'):
+        print("proving....")
+        if system == 'res':
+            resProv = ResolutionProverCommand
+        else:
+            resProv = Prover9Command
+        rpc = resProv(goal=self.c,assumptions=self.kb)
+        p1 = rpc.prove(verbose=False)
+        #print(rpc.proof(simplify=True))
+        if p1:
+            return True
+        else:
+            #self.kb.append(expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton) -> -argF(root)'))
+            rpc2 = resProv(goal=self.notC, assumptions=self.kb)
+            if rpc2.prove(verbose=False) == False:
+                print("No result found")
+                return None
+            else:
+                return False
 
 #Side-entry method to test nltk's proof systems.
 if __name__ == '__main__':
@@ -310,21 +433,35 @@ if __name__ == '__main__':
 
     #Rules:
 
-    kb.append(expr.fromstring('launch(fbi, investigation) & when(launch(fbi, investigation),tuesday) & how(launch(fbi,investigation), reluctantly) & sell(ducks,children) -> make(x, clear_that) ')) #Having both parent args -> right child arg implied
+    """ kb.append(expr.fromstring('launch(fbi, investigation) & when(launch(fbi, investigation),tuesday) & how(launch(fbi,investigation), reluctantly) & sell(ducks,children) -> make(x, clear_that) ')) #Having both parent args -> right child arg implied
     kb.append(expr.fromstring('make(IG_report, clear_that) -> argF(root)')) #Having both parent args -> right (and only) child implied.
+    """
     c = expr.fromstring('argF(root)')
+    z1 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton)')
+    z2 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton) -> argF(root)')
+    kb.append(z1)
+    kb.append(z2)
+    print(type(z1))
+    print(ResolutionProverCommand(c, kb).prove(verbose=True))
 
-    #Then to satisfy...
-    kb.append(expr.fromstring('when(launch(fbi, investigation), tuesday)')) #As this is a leaf and one of the arguments doesn't involve further nodes/a subtree, both args are offered here #1.
+
+    """#Then to satisfy...
+    #kb.append(expr.fromstring('when(launch(fbi, investigation), tuesday)')) #As this is a leaf and one of the arguments doesn't involve further nodes/a subtree, both args are offered here #1.
     kb.append(expr.fromstring('how(launch(fbi, investigation), reluctantly)'))
     kb.append(expr.fromstring('sell(ducks, children)')) #2
     kb.append(expr.fromstring('X(lobsters)'))
     kb.append(expr.fromstring('make(IG_report,y)')) #Conversely, the 2nd arg here is a subtree, so will have a gap to be filled.
+    print(type(expr.fromstring('z4')))"""
+
 
     #Code to run it....
-    rpc=ResolutionProverCommand(c,kb)
-    print(rpc.prove(verbose=True))
-    print(rpc.proof())
+    """rpc=ResolutionProverCommand(c,kb)
+    p = Prover9()
+    import os
+    p.config_prover9(binary_location='.')
+    rpp9 = Prover9Command(goal=c,assumptions=kb)
+    print(rpp9.prove(verbose=True))
+    #print(rpc.proof())"""
 
 
     #todo when the proof fails, we get the remaining terms to focus on proving - then see if we can unify that even partially with something to create the 'new front', need to see what else is known but not used.

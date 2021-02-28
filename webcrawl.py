@@ -66,23 +66,33 @@ def nlpFeed(t):
     config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36'
     urls = searchFetch(t)
     for url in urls:
-        #print("////////////// "+url + " ///////////")
-        try:
-            if ('www.bbc' in url):
-                article = requests.get(url)
-                if article.status_code != 200:
-                    raise ArticleException
-                soup = BeautifulSoup(article.content, 'html.parser')
-                body = ' '.join(x.text for x in soup.findAll('p'))
-                sources.add(body)
+        if url in web_cache:
+            wc = web_cache[url]
+            if wc != '':
+                sources.add(wc)
+                #print("Cache Hit on ", url[:min(len(url),50)],"......")
+        else:
+            #print("////////////// "+url + " ///////////")
+            try:
+                if ('www.bbc' in url):
+                    article = requests.get(url)
+                    if article.status_code != 200:
+                        raise ArticleException
+                    soup = BeautifulSoup(article.content, 'html.parser')
+                    body = ' '.join(x.text for x in soup.findAll('p'))
+                    sources.add(body)
 
-            else:
-                article = Article(url,config=config, language='en')
-                article.download()
-                article.parse()
-                sources.add(article.text)
-        except ArticleException:
-            print("Couldn't fetch: ", url)
+                else:
+                    article = Article(url,config=config, language='en')
+                    article.download()
+                    article.parse()
+                    sources.add(article.text)
+                    if article.text not in web_cache:
+                        web_cache[url] = article.text
+
+            except ArticleException:
+                print("Couldn't fetch: ", url)
+                web_cache[url] = ''
     dumpToCache()
     return sources
 

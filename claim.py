@@ -29,9 +29,9 @@ def argIDGen(argV):
         #For debug, use an arg generating function that yields closer to the existing string
         k=(str(argV.start) + "X" + str(argV.end) +"X" +(argV.text.replace("\"", "").replace(":",""))) #Sanitize for graph
         j = ''.join(filter(str.isalnum, str(k))).replace(' ', '') #Pre-emptively sanitize for KB also
-        return j
+        return 'a'+j
     else: #Otherwise just use a hash
-        return (str(argV.start) + "X" + str(argV.end) +"X" +str(hash(argV.text)).replace("-","a"))
+        return ('a'+str(argV.start) + "X" + str(argV.end) +"X" +str(hash(argV.text)).replace("-","a"))
 
 class Claim:
     def __init__(self,tlClaim,graph,roots):
@@ -60,12 +60,13 @@ class argNode():
         self.enabled = False
         return
 
-    def enable(self):
+    def enableNode(self):
         self.enabled = True
         return
 
-    def __str__(self):
-        return self.getUviOutput() + " " + self.span.text + "//Enabled:" + str(self.enabled) + " //ID" + self.ID
+    def __repr__(self):
+        return self.ID
+
 
     #Provide verb sense in readable format (if one exists)
     def getUviOutput(self):
@@ -95,11 +96,12 @@ class docClaim:
         return ""
 
     #Obtain ID from generating function, and add to central store if not yet there.
-    def argID(self,argV):
+    def argID(self,argV, doc=None):
         argID = argIDGen(argV)
-
+        if doc is None:
+            doc = self.doc
         if argID not in self.argBaseC:
-            self.argBaseC[argID] = argNode(argID, self.doc, argV)
+            self.argBaseC[argID] = argNode(argID, doc, argV)
 
         return argID
 

@@ -1,3 +1,5 @@
+from pprint import pprint
+
 import pandas as pd
 from os import path
 
@@ -5,19 +7,21 @@ import evidence
 from nlpPipeline import batchProc
 from claim import docClaim
 from webcrawl import nlpFeed, dumpToCache
-
+politiDict = {'true':1,'mostly-true':0.5,'barely-true':-0.5,'half-true':0,'mostly-false':-0.5,'pants-fire':-1,'false':-1}
+truthDict = {}
 
 def politihopInput():
 
     dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(10)
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(30)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
     statementSet = set()
     for i, row in df.iterrows():
         s=row['statement']
+        t=row['politifact_label']
         while not s[0].isalpha() or s[0] == " ":
             s=s[1:]
         if s.partition(" ")[0].lower() == "says":
@@ -28,23 +32,26 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if False or 'Bolton' in s:
+        if False or 'Cooper' in s or 'Bolton' in s:
             statementSet.add(s)
         dateMap[s] = None
-
-    return statementSet, dateMap
+        truthDict[s] = politiDict[t]
+    print("TD:",truthDict)
+    return statementSet, dateMap, truthDict
 
 
 DATA_IMPORT = {'politihop':politihopInput}
 
 def main(name='politihop'):
-
+    correct = 0
+    incorrect =0
     inputFunc = DATA_IMPORT[name]
 
-    statementSet, dateMap = inputFunc()
+    statementSet, dateMap, truthDict = inputFunc()
     docs = batchProc(statementSet,dateMap)
 
     for doc in docs:
+        scLevelResults=[]
 
         try:
             tlClaim = docClaim(doc)
@@ -52,30 +59,39 @@ def main(name='politihop'):
             continue
         for subclaim in tlClaim.subclaims:
             queries, ncs = subclaim.kb.prepSearch()
-            print(queries,subclaim.doc)
             sources=[]
             for q in queries:
                 sources.extend(nlpFeed(q))
             dumpToCache()
-            evidence.processEvidence(subclaim,ncs,sources)
+            logicReadyOIES = evidence.processEvidence(subclaim,ncs,sources)
+            subclaim.kb.OIEStoKB(logicReadyOIES)
+            result = subclaim.kb.prove()
+            print("RESULTAT", subclaim.doc, result)
+            if result is not None:
+                scLevelResults.append(1 if result else -1)
+            else:
+                'Could not determine'
             #input("next...")
-            """#newData = batchProc(sources)
+        if scLevelResults:
+            print("sc",scLevelResults)
+            proportion = sum(scLevelResults)/len(scLevelResults)
+            print("Guessed Truth:", str(proportion), "  Ground Truth:", truthDict[doc.text])
+            if (proportionToTruth(proportion) == truthDict[doc.text]):
+                correct+=1
+            else:
+                incorrect+=1
+        else:
+            incorrect+=1
 
+    print("correct:",correct, "incorrect:",incorrect)
 
-            for doc in newData:
-                try:
-                    tlEv = docClaim(doc)
-                except NotImplementedError:
-                    continue
-                print("EVKB-S")
-                for sc in tlEv.subclaims:
-                    print(sc.kb)
-                print("EVKB-E")
-            #Make the new claims into the graph, then into logic."""
-
-
-
-        #print("...............")
+def proportionToTruth(proportion):
+    if -0.5 <= proportion <= 0.5:
+        return 0
+    if proportion > 0.5:
+        return 1
+    else:
+        return -1
 
 if __name__ == '__main__':
     main()
