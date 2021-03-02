@@ -32,6 +32,7 @@ class KnowledgeBase():
         self.searchTerms=[]
         self.argFunc = tlClaim.argID
         self.kb2 = []
+        self.kb2_args = {}
 
         self.graph2rules()
 
@@ -95,8 +96,8 @@ class KnowledgeBase():
                 if i in j and i != j:
                     #print("rem",i," in ",j)
                     q2.remove(i)
-
-        return q2, newNCs
+        print("Queries",newNCs)
+        return [','.join(sorted(newNCs))] + q2, newNCs
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
@@ -116,8 +117,8 @@ class KnowledgeBase():
 
     #Generates a unique free variable for the knowledge base rules to be instantiated with.
     def getFreeVar(self):
-        modifier = self.freeVariableCounter // 26
-        retVal = 'a'*modifier + ascii_lowercase[self.freeVariableCounter // 26]
+        modifier = self.freeVariableCounter
+        retVal = 'u'+str(modifier)
         self.freeVariableCounter+=1
         return retVal
 
@@ -142,7 +143,7 @@ class KnowledgeBase():
             #print("No roots")
             return
         #Create the root implication as the conjunction of the verbs that feed into the root.
-        rootImpl = self.conjEstablish(self.roots,seen) + ' <-> argF(root)'
+        rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
         #self.addToKb('argF(root) ->'+ self.conjEstablish(self.roots,seen))
         return
@@ -290,7 +291,6 @@ class KnowledgeBase():
                 if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and edge[0] not in seen:
                     upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen)  # Conjestablish over all incoming violet edges (although usually is just 1)
                     impliedArg = modType + '(' +self.getFreeVar()+','+ modValID + ')' #The free value here represents the predicate.
-                    self.kb2.append(impliedArg)
                     self.addToKb(upVal + ' -> ' + impliedArg)
 
 
@@ -313,9 +313,10 @@ class KnowledgeBase():
 
         #Add the predicates
         oldPred = predicate
+        self.kb2_args[oldPred] = []
         for m in modifiers:
             modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
-            print("modtext",modifierText)
+            self.kb2_args[oldPred].append(modifierText)
             predicate += " & " + modifierText
 
         return predicate
@@ -345,8 +346,6 @@ class KnowledgeBase():
             argType = ent[0].replace("-","x")
             if type(ent[1]) is claim.argNode:
                 newArg = ent[1]
-            else:
-                argList
 
             """else:
                 if claim.getEdgeStyle(ent[0],ent[1]) != 'dotted':
@@ -387,6 +386,7 @@ class KnowledgeBase():
         for m in modifiers:
             modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
             predicate += " & " + modifierText
+            print("MATCHEDMOD2")
 
         if '()' not in predicate:
             return predicate
@@ -399,7 +399,8 @@ class KnowledgeBase():
         return (rpc.prove())
         #print(rpc.proof())"""
 
-    def prove(self,system='p9'):
+    def prove(self,system='res'):
+        print(self.kb)
         print("proving....")
         if system == 'res':
             resProv = ResolutionProverCommand
@@ -407,6 +408,7 @@ class KnowledgeBase():
             resProv = Prover9Command
         rpc = resProv(goal=self.c,assumptions=self.kb)
         p1 = rpc.prove(verbose=False)
+        return p1
         #print(rpc.proof(simplify=True))
         if p1:
             return True

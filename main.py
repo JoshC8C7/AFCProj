@@ -7,7 +7,7 @@ import evidence
 from nlpPipeline import batchProc
 from claim import docClaim
 from webcrawl import nlpFeed, dumpToCache
-politiDict = {'true':1,'mostly-true':0.5,'barely-true':-0.5,'half-true':0,'mostly-false':-0.5,'pants-fire':-1,'false':-1}
+politiDict = {'true':1,'mostly-true':1,'barely-true':-1,'half-true':0,'mostly-false':-1,'pants-fire':-1,'false':-1}
 truthDict = {}
 
 def politihopInput():
@@ -26,13 +26,13 @@ def politihopInput():
             s=s[1:]
         if s.partition(" ")[0].lower() == "says":
             author = row['author'].replace("Speaker: ", "")
-            if author in ['Facebook posts', 'Viral image']:
+            if True or author in ['Facebook posts', 'Viral image']:
                 s = s.partition(" ")[2]
             else:
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if False or 'Cooper' in s or 'Bolton' in s:
+        if False or 'Cooper' in s or 'Mekong' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -63,14 +63,14 @@ def main(name='politihop'):
             for q in queries:
                 sources.extend(nlpFeed(q))
             dumpToCache()
-            logicReadyOIES = evidence.processEvidence(subclaim,ncs,sources)
-            subclaim.kb.OIEStoKB(logicReadyOIES)
+            evidence.processEvidence(subclaim,ncs,sources)
+            #subclaim.kb.OIEStoKB(logicReadyOIES)
             result = subclaim.kb.prove()
             print("RESULTAT", subclaim.doc, result)
             if result is not None:
                 scLevelResults.append(1 if result else -1)
             else:
-                'Could not determine'
+                scLevelResults.append(0)
             #input("next...")
         if scLevelResults:
             print("sc",scLevelResults)

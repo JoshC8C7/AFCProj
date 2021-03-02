@@ -70,7 +70,7 @@ def nlpFeed(t):
             wc = web_cache[url]
             if wc != '':
                 sources.add(wc)
-                #print("Cache Hit on ", url[:min(len(url),50)],"......")
+                print("Cache Hit on ", url[:max(len(url),50)],"......")
         else:
             #print("////////////// "+url + " ///////////")
             try:
