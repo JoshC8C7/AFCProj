@@ -25,14 +25,14 @@ with open('data/pb2wn.json','r') as inFile:
 def processEvidence(subclaim, matchSet, sources):
     strippedExisting = subclaim.doc.text.translate(str.maketrans('', '', punctuation)).lower()
     evidence = receiveDoc(matchSet,sources)
-    evDocs = nlpPipeline.batchProc(evidence,{},matchSet)
+    urlMap = dict((x[1],x[0]) for x in evidence)
+    evDocs = nlpPipeline.batchProc(list(x[1] for x in evidence),{},urlMap,matchSet)
     soughtV = set()
     kbElligibleOIEs = []
 
     for x in subclaim.kb.argBaseC.values():
         if x.uvi is not None:
             soughtV.add(x)
-    print("EXS", subclaim.kb.kb2)
     for doc in evDocs:
         strippedIncoming = doc.text.translate(str.maketrans('', '', punctuation)).lower()
         if (strippedExisting == strippedIncoming):
@@ -41,6 +41,7 @@ def processEvidence(subclaim, matchSet, sources):
         uviMatchedOies = {}
         for oie in doc._.OIEs:
             oieAccum[oie['V']] = oie
+        #pprint(oieAccum)
         if oieAccum:
             #print("DOC",doc,"OIEACCUM",oieAccum)
             proceeding, sentimentMatches = uviMatch(soughtV,oieAccum, doc._.Uvis)
@@ -51,41 +52,14 @@ def processEvidence(subclaim, matchSet, sources):
                     #print("OIE from incoming:", p[1])
                     verbNode = subclaim.kb.getEnabledArgBaseC().get(p[0],None)
                     if verbNode is not None:
-                        uviMatchedOies[verbNode] = p[1]
+                        if verbNode in uviMatchedOies:
+                            uviMatchedOies[verbNode].append(p[1])
+                        else:
+                            uviMatchedOies[verbNode] = [p[1]]
             if uviMatchedOies:
-                nounMatch2(uviMatchedOies,sentimentMatches,subclaim)
+                nounMatch(uviMatchedOies,sentimentMatches,subclaim,doc)
 
     return kbElligibleOIEs
-
-#Takes oiesdict (key = the argNode corresponding to the matched verb, value = the oie it matched with) and subclaim.
-def nounMatch(oiesDict, subclaim):
-    nounMatch2(oiesDict,subclaim)
-    substitutedOIES = []
-    from textacy import similarity
-    for ek, ev in oiesDict.items(): #For each OIE
-        seen=[]
-        modFlag = False
-        #print("EK",ek,"EV",ev)
-        substitutedDict = ev.copy()
-        for neighb in subclaim.graph.in_edges(nbunch=ek.ID):
-            span = subclaim.kb.getEnabledArgBaseC().get(neighb[0], None)
-            if span is not None:
-                for fk, fv in ev.items(): #for all args of the verb
-                    #print(fv, fv.ents, "??", span.span, span.span.ents, compute_similarity(fv,span.span), claim.getEdgeStyle(fk,fv))
-                    if fk != 'V' and span.span not in seen and compute_similarity(fv,span.span) > 0.5 and claim.getEdgeStyle(fk,fv) != 'dotted':
-                        if ((not fv.ents and not span.span.ents) and compute_similarity(fv,span.span) > 0.7) or (fv.ents and span.span.ents and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in fv.ents for y in span.span.ents))):
-                            modFlag = True
-                            substitutedDict[fk] = span
-                            seen.append(span.span)
-                            #print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
-                            print(fv, "->",span.span)
-
-
-        if modFlag:
-            substitutedDict['V'] = ek
-            substitutedOIES.append(substitutedDict)
-    return substitutedOIES
-
 
 def corefCollect(span):
     corefs=[]
@@ -93,9 +67,19 @@ def corefCollect(span):
         corefs.extend((x.main for x in tok._.coref_clusters))
     return corefs
 
-def nounMatch2(oiesDict,subclaim):
-    print("OIESIN",oiesDict)
+def nodeCompare(IargK,IargV,Espan,seen,modFlag=False):
+    if modFlag or IargK in ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5'] + ['DIR', 'PRD', 'MNR']:
+        if IargK != 'V' and Espan.span not in seen and compute_similarity(IargV,Espan.span) > 0.5 and claim.getEdgeStyle(IargK, IargV) != 'dotted':
+            Icorefs, ECorefs = corefCollect(IargV), corefCollect(Espan.span)
+            if ((not IargV.ents and not Espan.span.ents) and compute_similarity(IargV, Espan.span) > 0.7) \
+            or (IargV.ents and Espan.span.ents and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))) \
+            or (Icorefs and ECorefs and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))):
+                return True
+    return False
 
+def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
+    #print("OIEDICT",oiesDict)
+    #print("SUBCLAIM TO CHECK: ", subclaim.roots)
     for kbEnt in subclaim.kb.kb2:
         #print("KBENT",kbEnt)
         seen = []
@@ -104,60 +88,75 @@ def nounMatch2(oiesDict,subclaim):
         splitvarg = kbEnt.split('(')
         verbT,arity,args = splitvarg[0][:-1],splitvarg[0][-1:],splitvarg[1].split(')')[0].split(',')
         verb = subclaim.kb.getEnabledArgBaseC().get(verbT, None)
-        accum = [False] * int(arity)
-        if verb in oiesDict:
+        for oiesEnt in oiesDict.get(verb,[]):
+            accum = [False] * int(arity)
+            oieIter = sorted(oiesEnt.items())
             for index, EargV in enumerate(args):
                 Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
 
                 if Espan is None:
                     print("failed ", EargV)
                     continue
-                print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
-                for IargK, IargV in sorted(oiesDict[verb].items()):
+                #print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
+                #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in oieIter))
+                for IargK, IargV in oieIter:
                     #print("VERB", verb, "IARGV:",IargV, "EARGV", EargV)
-                    if IargK in ['ARG0','ARG1','ARG2','ARG3','ARG4','ARG5']+['DIR', 'PRD','MNR']:
-                        if IargK != 'V' and Espan.span not in seen and compute_similarity(IargV,Espan.span) > 0.5 and claim.getEdgeStyle(IargK, IargV) != 'dotted':
-                            Icorefs, ECorefs = corefCollect(IargV), corefCollect(Espan.span)
-                            if ((not IargV.ents and not Espan.span.ents) and compute_similarity(IargV, Espan.span) > 0.7) \
-                                    or (IargV.ents and Espan.span.ents and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))) \
-                                    or (Icorefs and ECorefs and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))):
-                                seen.append(Espan.span)
-                                accum[index] = True
-                                # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
-                                print(index,": ",IargV, "->", Espan.span)
+                    if nodeCompare(IargK,IargV,Espan,seen):
+                        seen.append(Espan.span)
+                        accum[index] = True
+                        # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
+                        print(index,": ",IargV, "->", Espan.span)
 
 
+            #print(accum, sum(1 for i in accum if i)/int(arity))
+            if sum(1 for i in accum if i)/int(arity) >= 0.66:
+                modifiers=[]
+                for mod in subclaim.kb.kb2_args.get(kbEnt,[]): #for this predicate, are there modifiers listed? iterate over them
+                    #note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
+                    #rather than via conjestablish.
+                    enrichedModifierNode = subclaim.kb.getEnabledArgBaseC().get(mod, None) #Are these modifiers enabled?
+                    if enrichedModifierNode is None:
+                        continue
+                    modType = 'ARGM-'+mod[:3] #Their type is modType
+                    if modType in oiesDict[kbEnt]: #See if this modType is in the incoming oies
+                        if similarity.levenshtein(oiesDict[kbEnt][modType].text, enrichedModifierNode.span.text) > 0.5:
+                            modifiers.append(mod)
 
-        if all(accum):
-            modifiers=[]
-            for mod in subclaim.kb.kb2_args.get(kbEnt,[]): #for this predicate, are there modifiers listed? iterate over them
-                #note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
-                #rather than via conjestablish.
-                enrichedModifierNode = subclaim.kb.getEnabledArgBaseC()[mod] #Are these modifiers enabled?
-                if enrichedModifierNode is None:
+
+                newArgs = []
+                for index, ent in enumerate(accum):
+                    if True or ent:
+                        newArgs.append(args[index])
+                    else:
+                        fv = subclaim.kb.getFreeVar()
+                        newArgs.append(fv)
+
+                pred = verbT+arity+'('+','.join(newArgs) + ')'
+                if predNeg:
+                    pred = '-'+pred
+
+                for mod in modifiers:
+                    pred += ' &' + mod
+                subclaim.kb.addToKb(pred)
+                subclaim.kb.evidenceMap[pred] = docIn
+                print("NEW EVIDENCE: ", pred, "----->", docIn, " @ ", docIn._.url)
+
+        for sentiOIE, sentiMatchDirection in sentimentMatches:
+            #print("SxS",sentiOIE, "->", sentiMatchDirection)
+            #available: verb = the verb this was matched on
+            for index, EargV in enumerate(args):
+                Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
+                if Espan is None:
+                    #print("failed ", EargV)
                     continue
-                modType = 'ARGM-'+mod[:3] #Their type is modType
-                if modType in oiesDict[kbEnt]: #See if this modType is in the incoming oies
-                    if similarity.levenshtein(oiesDict[kbEnt][modType].text, enrichedModifierNode.span.text) > 0.5:
-                        modifiers.append(mod)
-
-
-            newArgs = []
-            for index, ent in enumerate(accum):
-                if ent:
-                    newArgs.append(args[index])
-                else:
-                    fv = subclaim.kb.getFreeVar()
-                    newArgs.append(fv)
-
-            pred = verbT+arity+'('+','.join(newArgs) + ')'
-            if predNeg:
-                pred = '-'+pred
-
-            for mod in modifiers:
-                pred += ' &' + mod
-            subclaim.kb.addToKb(pred)
-
+                #print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
+                #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in sentiOIE.items()))
+                sentiAccum = [False] * int(arity)
+                for IargK, IargV in sentiOIE.items():
+                    if nodeCompare(IargK, IargV, Espan, []):
+                        #print("SOIE",sentiOIE)
+                        # print(IargK,"SENTIMATCH",sentiMatch)
+                        sentiAccum[index] = True
     return
 
 def checkGrammatical(inSpan):
@@ -186,90 +185,82 @@ def uviMatch(existing, incoming, incomingUviMap):
     oieMatches = []
     sentimentMatches = []
     seen = set()
-    for i in existing:
-        for jk, j in incoming.items():
-            im = pb2wn.get(i.uvi,None)
-            jm = pb2wn.get(incomingUviMap[jk],None)
-            if im is not None and jm is not None:
-                for imm in im:
-                    try:
-                        wni = wn.synset(imm)
-
-                    except:
-                        continue
-                    for jmm in jm:
-                        if (imm,jmm) not in seen:
-                            seen.add((imm,jmm))
+    seenSent = set()
+    for jk, j in incoming.items():
+        jm = pb2wn.get(incomingUviMap[jk], None)
+        if jm is not None:
+            for jmm in jm:
+                try:
+                    wnj = wn.synset(jmm)
+                except:
+                    continue
+                for i in existing:
+                    im = pb2wn.get(i.uvi,None)
+                    if im is not None:
+                        for imm in im:
                             try:
-                                wnj = wn.synset(jmm)
+                                wni = wn.synset(imm)
                             except:
                                 continue
-                            wnj_s = swn.senti_synset(jmm)
-                            if wnj_s.pos_score() >= 0.5:
-                                sentimentMatches.append((j, True))
-                            elif wnj_s.neg_score() >= 0.5:
-                                sentimentMatches.append((j,False))
+                            if (imm, jmm) not in seen:
+                                seen.add((imm, jmm))
+                                sim = (wn.path_similarity(wni,wnj))
+                                #print(wni,wnj,sim)
+                                if sim > 0.5 and (i.ID,j) not in oieMatches:
+                                    #print("OIEHIT", wni, "->", wnj, " : ", j)
+                                    #print(j['V'].doc._.coref_scores)
+                                    oieMatches.append((i.ID,j))
 
-                            sim = (wn.path_similarity(wni,wnj))
-                            #print(wni,wnj,sim)
-                            if sim > 0.5 and (i.ID,j) not in oieMatches:
-                                oieMatches.append((i.ID,j))
+                if jk not in seenSent:
+                    seenSent.add(jk)
+                    wnj_s = swn.senti_synset(jmm)
+                    if wnj_s.pos_score() >= 0.5 and wnj_s.neg_score() < 0.5:
+                        sentimentMatches.append((j,True))
+                    elif wnj_s.neg_score() >= 0.5 and wnj_s.pos_score() < 0.5:
+                        sentimentMatches.append((j,False))
+
     return list(oieMatches), sentimentMatches
 
 
 def receiveDoc(matchSet, sources):
     sentences,matched = [], {}
-    for s in sources:
+    for source in sources:
+        url = source[0]
+        s = source[1]
         if len(s) < 5:
             continue
         doc = nlp(s)
         matchThreshold = 1#max(int(MATCH_SENSITIVITY * len(matchSet))//3,1)
         for ent in matchSet:
-            for sent in doc.sents:
-                mat = find_near_matches(ent, sent.text, max_l_dist=len(ent)//3)
-                if mat:
-                    if sent.text.encode("ascii", errors="ignore").decode() == sent.text:
+            if len(ent) > 29:
+                print("DROPPENT ", ent)
+            if len(ent) < 30:
+                for sent in doc.sents:
+                    mat = find_near_matches(ent, sent.text, max_l_dist=len(ent)//3)
+                    if mat:
+                        if sent.text.encode("ascii", errors="ignore").decode() == sent.text:
 
-                        #Need to match with MATCH_SENSITIVITY+ entities, so for default (MATCH_SENSITIVITY = 2):
-                        #After matching with 1, move it to the 'matched' list, then ig it matches again,
-                        #move it into the final (sentences) list and set its entry in matched to > MATCH_SENSITIVITY (3)
-                        #such that it cannot continue to be added to sentences (duplicates).
-                        if sent.text in matched:
-                            if matched[sent.text] == matchThreshold:
-                                sentences.append(sent.text.replace("\n",""))
-                                matched[sent.text] += 1
-                            #else None
-                        else:
-                            matched[sent.text] = 1
-                            if matchThreshold == 1:
-                                sentences.append(sent.text.replace("\n", ""))
-                                matched[sent.text] += 1
-                            #else None
-
-        """#Method 2: fuzzywuzzy on the ncs + ents
-
-        doc1 = nlp1(s)
-        vals1 = list(matchSet)
-        #vals1.extend(allMatches)
-        for sent in doc1.sents:
-            vals2 = list(x.text for x in sent.ents)
-            #vals2.extend(y.text for y in sent.noun_chunks)
-            for val1 in vals1:
-                for val2 in vals2:
-                    if partial_ratio(val1,val2) > PARTIAL_TOLERANCE:
-                        if sent.text.encode("ascii", errors="ignore").decode() == sent.text and sent.text.replace("\n", "") not in sentences2:
-                            sentences2.append(sent.text.replace("\n", ""))"""
-    """newSents=[]
-    if len(sentences) % 4 != 0:
-        sentences.append('')
-    for i in range(0,len(sentences)-4,4):
-        newSents.append(sentences[i] + ' ' + sentences[i+1] +' ' + sentences[i+2] + ' ' + sentences[i+3])"""
+                            #Need to match with MATCH_SENSITIVITY+ entities, so for default (MATCH_SENSITIVITY = 2):
+                            #After matching with 1, move it to the 'matched' list, then ig it matches again,
+                            #move it into the final (sentences) list and set its entry in matched to > MATCH_SENSITIVITY (3)
+                            #such that it cannot continue to be added to sentences (duplicates).
+                            if sent.text in matched:
+                                if matched[sent.text] == matchThreshold:
+                                    sentences.append((url, sent.text.replace("\n","")))
+                                    matched[sent.text] += 1
+                                #else None
+                            else:
+                                matched[sent.text] = 1
+                                if matchThreshold == 1:
+                                    sentences.append((url,sent.text.replace("\n", "")))
+                                    matched[sent.text] += 1
+                                #else None
     return sentences
 
 if __name__ == '__main__':
     from nltk.corpus import wordnet as wn
     while True:
-        inp1 = wn.synsets(input('enter word: '))
+        inp1 = wn.synset(input('enter word: '))
         for s in inp1:
             print(s)
 

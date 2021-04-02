@@ -12,6 +12,7 @@ GOOGLE_API_KEY = tokens.GOOGLE_API_KEY
 BING_S1_KEY = tokens.BING_S1_KEY
 
 CACHE_FILE='data/SearchCache.pickle'
+#CACHE_FILE='data/liarCache.pickle'
 SELECTED_SEARCH='bingFree'
 sentencizer = Sentencizer()
 
@@ -69,8 +70,8 @@ def nlpFeed(t):
         if url in web_cache:
             wc = web_cache[url]
             if wc != '':
-                sources.add(wc)
-                print("Cache Hit on ", url[:max(len(url),50)],"......")
+                sources.add((url, wc))
+                #print("Cache Hit on ", url[:max(len(url),50)],"......")
         else:
             #print("////////////// "+url + " ///////////")
             try:
@@ -80,13 +81,15 @@ def nlpFeed(t):
                         raise ArticleException
                     soup = BeautifulSoup(article.content, 'html.parser')
                     body = ' '.join(x.text for x in soup.findAll('p'))
-                    sources.add(body)
+                    sources.add((url, body))
+                    if body not in web_cache:
+                        web_cache[url] = body
 
                 else:
                     article = Article(url,config=config, language='en')
                     article.download()
                     article.parse()
-                    sources.add(article.text)
+                    sources.add((url,article.text))
                     if article.text not in web_cache:
                         web_cache[url] = article.text
 

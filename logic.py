@@ -33,7 +33,8 @@ class KnowledgeBase():
         self.argFunc = tlClaim.argID
         self.kb2 = []
         self.kb2_args = {}
-
+        self.ruleLength = 0
+        self.evidenceMap = {}
         self.graph2rules()
 
 
@@ -93,8 +94,8 @@ class KnowledgeBase():
         q2=queries.copy()
         for i in queries:
             for j in queries:
-                if i in j and i != j:
-                    #print("rem",i," in ",j)
+                if i in j and i != j and i in q2:
+                    print("rem",i," in ",j)
                     q2.remove(i)
         print("Queries",newNCs)
         return [','.join(sorted(newNCs))] + q2, newNCs
@@ -145,6 +146,8 @@ class KnowledgeBase():
         #Create the root implication as the conjunction of the verbs that feed into the root.
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
+        self.ruleLength = len(self.kb)
+        print("KBRULES ", self.kb)
         #self.addToKb('argF(root) ->'+ self.conjEstablish(self.roots,seen))
         return
 
@@ -250,7 +253,8 @@ class KnowledgeBase():
                         miniArgList.append(freeVar + str(i))
                 impliedArg = (root)+str(len(miniArgList)) + '(' + ",".join(miniArgList)+")"
                 self.kb2.append(impliedArg)
-                self.addToKb(upVal + ' -> ' + impliedArg)
+                if upVal:
+                    self.addToKb(upVal + ' -> ' + impliedArg)
 
             elif self.modOrCore(edge) == 'neg':
                 predNeg = True
@@ -322,104 +326,62 @@ class KnowledgeBase():
         return predicate
 
 
-
-        #Convert OIE to KB compatible, also enrich supporting data structures sufficiently
-    def OIEStoKB(self,oieList):
-        seen = set()
-        for oie in oieList:
-            toKb = self.OIEtoKB(oie)
-            if toKb is not None and toKb not in seen:
-                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>",oie)
-                seen.add(toKb)
-                self.addToKb(toKb)
-        return
-
-    def OIEtoKB(self,oieUnsorted):
-        verb = oieUnsorted['V']
-        oie = list(sorted(((xk, xv) for xk, xv in oieUnsorted.items() if xk != "V"), key=lambda q: q[0]))
-        #oie in format (argType, value)
-        argList = []
-        modifiers = []
-        predNeg = False
-        for ent in oie:
-            newArg = None
-            argType = ent[0].replace("-","x")
-            if type(ent[1]) is claim.argNode:
-                newArg = ent[1]
-
-            """else:
-                if claim.getEdgeStyle(ent[0],ent[1]) != 'dotted':
-                    newArg = self.argBaseC[self.argFunc(ent[1],doc=ent[1].doc)]
-                    newArg.enableNode()"""
-            #Assert: newArg = argNode object of argument text, argType = arg type.
-            if newArg is not None:
-                newArg.enableNode()
-                if 'ARGM' not in argType:
-                    argList.append(newArg)
-
-                else:
-                    subtype = argType.replace("ARGMx","")
-                    if subtype == "NEG":
-                        predNeg = True
-                    #todo temporal reasoning
-                    if subtype in ['TMP'] + ['MOD', 'ADV', 'PRP', 'CAU', 'LOC']:
-                        if 'never' in newArg.span.text:
-                            predNeg = True
-                        else:
-                            modifiers.append((argType, newArg.ID))
-                    elif subtype in ['DIR', 'PRD', 'MNR']:
-                        if not (subtype == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in newArg.span)):
-                            argList.append(newArg)
-
-
-        #Add to future search terms pool
-        if len(argList) > 1:
-            self.searchTerms.append((verb, argList))
-
-        # Form the predicate - have to do this now so we can add modifiers on the next pass of the edges.
-        predicate = verb.ID + str(len(argList))+'(' + ','.join((x.ID for x in argList)) + ')'
-        if predNeg:
-            predicate = '-'+predicate
-
-        #Add the predicates
-        oldPred = predicate
-        for m in modifiers:
-            modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
-            predicate += " & " + modifierText
-            print("MATCHEDMOD2")
-
-        if '()' not in predicate:
-            return predicate
-        else:
-            return None
-
-
-    """ def prove(self):
-        rpc = ResolutionProverCommand(self.c, self.kb)
-        return (rpc.prove())
-        #print(rpc.proof())"""
-
     def prove(self,system='res'):
-        print(self.kb)
         print("proving....")
         if system == 'res':
             resProv = ResolutionProverCommand
         else:
             resProv = Prover9Command
         rpc = resProv(goal=self.c,assumptions=self.kb)
-        p1 = rpc.prove(verbose=False)
+        p1 = rpc.prove(verbose=True)
+        if p1:
+            prf = rpc.proof().replace(" ", "").split("\n")
+            prfParsed = []
+            for x in prf:
+                if '{}' in x:
+                    try:
+                        y = x.split('}')[1].replace('(','').replace(')','').split(',')
+                        prfParsed.append((int(y[0]),int(y[1])))
+                    except:
+                        continue #in the rare case that argF{} is read as an input.
+                elif x:
+                    y=x.split('{')[1].split('}')
+                    if y[1] == 'A':
+                        prfParsed.append(y[0])
+                    else:
+                        ysplit = y[1].replace(')','').replace('(','').split(',')
+                        prfParsed.append((int(ysplit[0]),int(ysplit[1])))
+
+            print(self.ruleLength)
+            for ind, a in enumerate(prfParsed):
+                if ind <= self.ruleLength:
+                    print("(Rule) ",end='')
+                print(str(ind+1), a)
+            path = backtracker(prfParsed,self.ruleLength)
+            for index, i in enumerate(path):
+                if index > 0: print("-->--",end="")
+                if type(i) is not tuple:
+                    print(self.evidenceMap[i], " @ ", self.evidenceMap[i]._.url,end='')
+                #else: print(i)
         return p1
         #print(rpc.proof(simplify=True))
-        if p1:
-            return True
+
+def backtracker(prf, rl):
+    from collections import deque
+    path=[]
+    queue = deque(prf[-1])
+    while len(queue):
+        k=queue.popleft()-1
+        step = prf[k]
+        if k <= rl:
+            print("RULE",end='')
         else:
-            #self.kb.append(expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton) -> -argF(root)'))
-            rpc2 = resProv(goal=self.notC, assumptions=self.kb)
-            if rpc2.prove(verbose=False) == False:
-                print("No result found")
-                return None
-            else:
-                return False
+            path.append(step)
+        print('STEP: ', step)
+        if type(step) is tuple:
+            queue.extend(step)
+    path.reverse()
+    return path
 
 #Side-entry method to test nltk's proof systems.
 if __name__ == '__main__':
@@ -435,35 +397,35 @@ if __name__ == '__main__':
 
     #Rules:
 
-    """ kb.append(expr.fromstring('launch(fbi, investigation) & when(launch(fbi, investigation),tuesday) & how(launch(fbi,investigation), reluctantly) & sell(ducks,children) -> make(x, clear_that) ')) #Having both parent args -> right child arg implied
-    kb.append(expr.fromstring('make(IG_report, clear_that) -> argF(root)')) #Having both parent args -> right (and only) child implied.
-    """
+    #kb.append(expr.fromstring('launch(fbi, investigation) & when(launch(fbi, investigation),tuesday) & how(launch(fbi,investigation), reluctantly) & sell(ducks,children) -> make(x, clear_that) ')) #Having both parent args -> right child arg implied
+    #kb.append(expr.fromstring('make(IG_report, clear_that) -> argF(root)')) #Having both parent args -> right (and only) child implied.
+
     c = expr.fromstring('argF(root)')
-    z1 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton)')
+    """z1 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton)')
     z2 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton) -> argF(root)')
     kb.append(z1)
     kb.append(z2)
     print(type(z1))
-    print(ResolutionProverCommand(c, kb).prove(verbose=True))
+    print(ResolutionProverCommand(c, kb).prove(verbose=False))"""
 
 
-    """#Then to satisfy...
+    #Then to satisfy...
     #kb.append(expr.fromstring('when(launch(fbi, investigation), tuesday)')) #As this is a leaf and one of the arguments doesn't involve further nodes/a subtree, both args are offered here #1.
-    kb.append(expr.fromstring('how(launch(fbi, investigation), reluctantly)'))
-    kb.append(expr.fromstring('sell(ducks, children)')) #2
-    kb.append(expr.fromstring('X(lobsters)'))
-    kb.append(expr.fromstring('make(IG_report,y)')) #Conversely, the 2nd arg here is a subtree, so will have a gap to be filled.
-    print(type(expr.fromstring('z4')))"""
+
+    #rules
+    kb.append(expr.fromstring('sells(cake,bob) & wants(cake,bob) -> argF(root)'))
+    kb.append(expr.fromstring('has(cake,shop) & open(shop) -> sells(cake,x)'))
+
+    #evidence
+    kb.append(expr.fromstring('open(shop)'))
+    kb.append(expr.fromstring('wants(cake,bob)'))
+    kb.append(expr.fromstring('has(cake,shop)'))
+
 
 
     #Code to run it....
-    """rpc=ResolutionProverCommand(c,kb)
-    p = Prover9()
-    import os
-    p.config_prover9(binary_location='.')
-    rpp9 = Prover9Command(goal=c,assumptions=kb)
-    print(rpp9.prove(verbose=True))
-    #print(rpc.proof())"""
+    rpc=ResolutionProverCommand(c,kb)
+    rpc.prove(verbose=True)
 
 
     #todo when the proof fails, we get the remaining terms to focus on proving - then see if we can unify that even partially with something to create the 'new front', need to see what else is known but not used.

@@ -14,7 +14,7 @@ def politihopInput():
 
     dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(30)
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(15)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -32,7 +32,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if False or 'Cooper' in s or 'Mekong' in s or 'trillion' in s:
+        if False or 'Cooper' in s: #and politiDict[t] == 1 : #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -40,19 +40,46 @@ def politihopInput():
     return statementSet, dateMap, truthDict
 
 
-DATA_IMPORT = {'politihop':politihopInput}
+def liarInput():
+
+    dateMap = {}
+    #Read in input claims
+    df=pd.read_table(path.join("data","liarliar","train.tsv"),sep='\t').head(200)
+
+    #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
+    #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
+    statementSet = set()
+    for i, row in df.iterrows():
+        s=row[2]
+        t=row[1]
+        while not s[0].isalpha() or s[0] == " ":
+            s=s[1:]
+        if s.partition(" ")[0].lower() == "says":
+                s = s.partition(" ")[2]
+        #Allows for filtering to debug specific example.
+        #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
+        if 'squat' in s : #or 'Cooper' in s or 'trillion' in s:
+            statementSet.add(s)
+        dateMap[s] = None
+        truthDict[s] = politiDict[t]
+    print("TD:",truthDict)
+
+    return statementSet, dateMap, truthDict
+
+DATA_IMPORT = {'politihop':politihopInput, 'liarliar':liarInput}
 
 def main(name='politihop'):
     correct = 0
     incorrect =0
     inputFunc = DATA_IMPORT[name]
+    results = []
 
     statementSet, dateMap, truthDict = inputFunc()
     docs = batchProc(statementSet,dateMap)
 
     for doc in docs:
+        print("CLAIM: ", doc)
         scLevelResults=[]
-
         try:
             tlClaim = docClaim(doc)
         except NotImplementedError:
@@ -75,15 +102,13 @@ def main(name='politihop'):
         if scLevelResults:
             print("sc",scLevelResults)
             proportion = sum(scLevelResults)/len(scLevelResults)
+            proportion = max(scLevelResults)
             print("Guessed Truth:", str(proportion), "  Ground Truth:", truthDict[doc.text])
-            if (proportionToTruth(proportion) == truthDict[doc.text]):
-                correct+=1
-            else:
-                incorrect+=1
+            results.append((proportionToTruth(proportion), truthDict[doc.text]))
         else:
-            incorrect+=1
+            results.append((5, truthDict[doc.text]))
+    print(results)
 
-    print("correct:",correct, "incorrect:",incorrect)
 
 def proportionToTruth(proportion):
     if -0.5 <= proportion <= 0.5:

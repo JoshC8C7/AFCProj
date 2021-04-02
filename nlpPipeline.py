@@ -18,7 +18,11 @@ def docUsefullness(doc,miniContext):
     return False
 
 def oiePipe(doc):
-    oie = predictorOIE.predict(doc.text)
+    try:
+        oie = predictorOIE.predict(doc.text)
+    except RuntimeError:
+        print("PYTorch issues")
+        return doc
     # Parse Open Information Extraction model response & combine with Verb Sense information.
     oieSubclaims = []
     frames={}
@@ -49,6 +53,7 @@ Doc.set_extension("Uvis", default={})
 Doc.set_extension("OIEs", default={})
 Doc.set_extension("ConnectiveEdges", default=[])
 Doc.set_extension("rootDate",default='')
+Doc.set_extension("url",default='')
 # Run connective extractor over input text and store result in doc._.extract_connectives.
 coref = neuralcoref.NeuralCoref(nlp.vocab)
 nlp.add_pipe(coref, name='neuralcoref')
@@ -70,15 +75,17 @@ def naiveQuotes(doc):
         return False
 
 
-def batchProc(statements,dateMap, miniContext = None):
+def batchProc(statements, dateMap, urlMap=None, miniContext = None):
     #See 25 - http://assets.datacamp.com/production/course_8392/slides/chapter3.pdf
+    if urlMap is None: urlMap = {}
     docs = []
-    inputData = list(zip(statements,({'date':dateMap.get(s,None)} for s in statements)))
-    #print(inputData)
+    inputData = list(zip(statements,({'date':dateMap.get(s,None), 'url':urlMap.get(s,None)} for s in statements)))
+    print(inputData)
     if miniContext is not None:
         with nlp.disable_pipes(['extract_connectives','tagger','oie']):
             for doc, context in nlp.pipe(inputData,as_tuples=True):
                 doc._.rootDate = context['date']
+                doc._.url = context['url']
                 if docUsefullness(doc,miniContext) and not naiveQuotes(doc):
                     doc = oiePipe(doc)
                     docs.append(doc)
