@@ -14,7 +14,7 @@ def politihopInput():
 
     dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(15)
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(30)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -32,7 +32,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if False or 'Cooper' in s: #and politiDict[t] == 1 : #or 'Cooper' in s or 'trillion' in s:
+        if politiDict[t] == 1:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -68,9 +68,7 @@ def liarInput():
 
 DATA_IMPORT = {'politihop':politihopInput, 'liarliar':liarInput}
 
-def main(name='politihop'):
-    correct = 0
-    incorrect =0
+def main(name='politihop',format=''):
     inputFunc = DATA_IMPORT[name]
     results = []
 
@@ -85,11 +83,14 @@ def main(name='politihop'):
         except NotImplementedError:
             continue
         for subclaim in tlClaim.subclaims:
+            print("SUBCLAIM: ", subclaim.roots)
             queries, ncs = subclaim.kb.prepSearch()
             sources=[]
-            for q in queries:
-                sources.extend(nlpFeed(q))
-            dumpToCache()
+            if format=='pfOnly':
+                sources.extend(nlpFeed(tlClaim.doc.text))
+            else:
+                for q in queries:
+                    sources.extend(nlpFeed(q))
             evidence.processEvidence(subclaim,ncs,sources)
             #subclaim.kb.OIEStoKB(logicReadyOIES)
             result = subclaim.kb.prove()

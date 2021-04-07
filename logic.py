@@ -147,7 +147,7 @@ class KnowledgeBase():
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
         self.ruleLength = len(self.kb)
-        print("KBRULES ", self.kb)
+        #print("KBRULES ", self.kb)
         #self.addToKb('argF(root) ->'+ self.conjEstablish(self.roots,seen))
         return
 
@@ -352,17 +352,18 @@ class KnowledgeBase():
                         ysplit = y[1].replace(')','').replace('(','').split(',')
                         prfParsed.append((int(ysplit[0]),int(ysplit[1])))
 
-            print(self.ruleLength)
-            for ind, a in enumerate(prfParsed):
+            #print(self.ruleLength)
+            """for ind, a in enumerate(prfParsed):
                 if ind <= self.ruleLength:
                     print("(Rule) ",end='')
-                print(str(ind+1), a)
+                print(str(ind+1), a)"""
             path = backtracker(prfParsed,self.ruleLength)
             for index, i in enumerate(path):
-                if index > 0: print("-->--",end="")
+                if index > 0 and index < len(path) - 1: print("-->--",end="")
                 if type(i) is not tuple:
                     print(self.evidenceMap[i], " @ ", self.evidenceMap[i]._.url,end='')
                 #else: print(i)
+            print()
         return p1
         #print(rpc.proof(simplify=True))
 
@@ -374,10 +375,11 @@ def backtracker(prf, rl):
         k=queue.popleft()-1
         step = prf[k]
         if k <= rl:
-            print("RULE",end='')
+            print("",end='')
+            #print("RULE",end='')
         else:
             path.append(step)
-        print('STEP: ', step)
+        #print('STEP: ', step)
         if type(step) is tuple:
             queue.extend(step)
     path.reverse()

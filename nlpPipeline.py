@@ -1,6 +1,8 @@
 import spacy
 from spacy.matcher import Matcher
 from spacy.tokens import Doc, Span
+from torch.cuda import current_device
+
 import connectives as con
 from pprint import pprint
 import textacy.similarity as ts
@@ -8,16 +10,18 @@ from transformer_srl import dataset_readers,models,predictors
 import  neuralcoref
 #This is a module rather than a class to enforce singleton behaviour of the models. The nlp model is used across the
 #files and so should be accessible from each module rather than through a single object.
-
 def docUsefullness(doc,miniContext):
     for i in doc.ents:
         for j in miniContext:
             if ts.token_sort_ratio(i.lower_,j.lower()) > 0.5:
                 #print("Proceeding to OIE")
                 return True
+    #print("DROPPING: ", doc)
     return False
 
 def oiePipe(doc):
+    if len(doc) > 500:
+        return doc
     try:
         oie = predictorOIE.predict(doc.text)
     except RuntimeError:
@@ -63,7 +67,7 @@ nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 matcher = Matcher(nlp.vocab)
 matcher.add("quotes",[[{'ORTH': '"'},{'IS_ASCII': True, 'OP': '*'}]])
 
-predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl")
+predictorOIE = predictors.SrlTransformersPredictor.from_path("data/srl_bert_base_conll2012.tar.gz", "transformer_srl", cuda_device=current_device())
 print("Models Loaded")
 
 def naiveQuotes(doc):
@@ -80,9 +84,9 @@ def batchProc(statements, dateMap, urlMap=None, miniContext = None):
     if urlMap is None: urlMap = {}
     docs = []
     inputData = list(zip(statements,({'date':dateMap.get(s,None), 'url':urlMap.get(s,None)} for s in statements)))
-    print(inputData)
+    print(len(inputData))
     if miniContext is not None:
-        with nlp.disable_pipes(['extract_connectives','tagger','oie']):
+        with nlp.disable_pipes(['extract_connectives','oie']):
             for doc, context in nlp.pipe(inputData,as_tuples=True):
                 doc._.rootDate = context['date']
                 doc._.url = context['url']

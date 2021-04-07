@@ -13,6 +13,7 @@ BING_S1_KEY = tokens.BING_S1_KEY
 
 CACHE_FILE='data/SearchCache.pickle'
 #CACHE_FILE='data/liarCache.pickle'
+#CACHE_FILE='data/pfCache.pickle'
 SELECTED_SEARCH='bingFree'
 sentencizer = Sentencizer()
 
@@ -27,7 +28,19 @@ def googleQ(term):
     url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx=be06938b6f07a2eb1&q={term}&num={num}"
     data = requests.get(url).json()
     found = data.get("items")
-    return(i['link'] for i in found)
+
+    return list(i['link'] for i in found)
+
+def politifactOnly(tlClaimtext):
+    time.sleep(1)
+    url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={tlClaimtext}&customconfig=506c5964-cf72-4d1e-a06d-655cc3d3989e&mkt=en-GB&count=1"
+    data = requests.get(url, headers={"Ocp-Apim-Subscription-key": BING_FREE_KEY})
+    vals = data.json().get('webPages',{}).get('value',{})
+    if not vals:
+        return []
+    else:
+        return list(i['url'] for i in vals)
+
 
 def bingFree(term):
     return bingParse(term, BING_FREE_KEY)
@@ -45,7 +58,7 @@ def bingParse(term, key):
     else:
         return list(i['url'] for i in vals)
 
-search_opts = {'google':googleQ, 'bingFree':bingFree,'bingS1':bingS1}
+search_opts = {'google':googleQ, 'bingFree':bingFree,'bingS1':bingS1, 'pfOnly':politifactOnly}
 
 
 def searchFetch(term):
@@ -67,11 +80,13 @@ def nlpFeed(t):
     config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36'
     urls = searchFetch(t)
     for url in urls:
+        if 'factcheck' in url or 'fact-check' in url:
+            continue
         if url in web_cache:
             wc = web_cache[url]
             if wc != '':
                 sources.add((url, wc))
-                #print("Cache Hit on ", url[:max(len(url),50)],"......")
+                print("Cache Hit on ", url[:max(len(url),50)],"......")
         else:
             #print("////////////// "+url + " ///////////")
             try:
@@ -90,6 +105,7 @@ def nlpFeed(t):
                     article.download()
                     article.parse()
                     sources.add((url,article.text))
+                    print(article.text)
                     if article.text not in web_cache:
                         web_cache[url] = article.text
 
