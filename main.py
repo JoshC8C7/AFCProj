@@ -14,7 +14,7 @@ def politihopInput():
 
     dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(30)
+    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(100)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -32,7 +32,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if politiDict[t] == 1:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
+        if politiDict[t] == -1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -58,7 +58,7 @@ def liarInput():
                 s = s.partition(" ")[2]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if 'squat' in s : #or 'Cooper' in s or 'trillion' in s:
+        if True or 'squat' in s : #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -84,14 +84,14 @@ def main(name='politihop',format=''):
             continue
         for subclaim in tlClaim.subclaims:
             print("SUBCLAIM: ", subclaim.roots)
-            queries, ncs = subclaim.kb.prepSearch()
+            queries, ncs, entities = subclaim.kb.prepSearch()
             sources=[]
             if format=='pfOnly':
                 sources.extend(nlpFeed(tlClaim.doc.text))
             else:
                 for q in queries:
                     sources.extend(nlpFeed(q))
-            evidence.processEvidence(subclaim,ncs,sources)
+            evidence.processEvidence(subclaim,ncs,entities,sources)
             #subclaim.kb.OIEStoKB(logicReadyOIES)
             result = subclaim.kb.prove()
             print("RESULTAT", subclaim.doc, result)

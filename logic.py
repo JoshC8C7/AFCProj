@@ -98,7 +98,7 @@ class KnowledgeBase():
                     print("rem",i," in ",j)
                     q2.remove(i)
         print("Queries",newNCs)
-        return [','.join(sorted(newNCs))] + q2, newNCs
+        return [','.join(sorted(newNCs))] + q2, ncs, entities
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
