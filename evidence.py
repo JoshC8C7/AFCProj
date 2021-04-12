@@ -24,12 +24,30 @@ nlp1.disable_pipes()
 with open('data/pb2wn.json','r') as inFile:
     pb2wn = json.load(inFile)
 
-def wikidataCompare(e1, e2):
-    if e1.label_ != e2.label_:
+def wikidataCompare(e1, e2, cache):
+    print("CACHE: ",cache)
+    if all(x.pos_ not in ('PROPN','NOUN') for x in e1) or all(y.pos_ not in ('PROPN','NOUN') for y in e2) or e1.label_ != e2.label_:
         return False
-    #print("WIKIDATING")
-    k1 = requests.get(endpoint_url.format(e1.text.replace(" ", "%20"))).json().get('search',[])
-    k2 = (x.get('id','') for x in requests.get(endpoint_url.format(e2.text.replace(" ", "%20"))).json().get('search',[]))
+    if e1.label_ is None:
+        e1 = e1.root
+        e2 = e2.root
+    if e1.text in cache:
+        k1 = cache[e1.text]
+    else:
+        print("polling: ", e1)
+        k1 = requests.get(endpoint_url.format(e1.text.replace(" ", "%20"))).json().get('search', [])
+        if k1:
+            cache[e1.text] = k1
+        else: return False
+
+    if e2.text in cache:
+        k2=cache[e2.text]
+    else:
+        print("Polling: ", e2)
+        k2 = (x.get('id','') for x in requests.get(endpoint_url.format(e2.text.replace(" ", "%20"))).json().get('search',[]))
+        if k2:
+            cache[e2.text] = k2
+        else: return False
     return any(x['id'] in k2 for x in k1)
 
 def numCompare(e1,e2):
@@ -58,6 +76,7 @@ def numCompare(e1,e2):
         return True
 
 def processEvidence(subclaim, ncs, entities, sources):
+    wikiCache = {}
     strippedExisting = subclaim.doc.text.translate(str.maketrans('', '', punctuation)).lower()
     evidence = receiveDoc(sources, subclaim.doc)
     urlMap = dict((x[1],x[0]) for x in evidence)
@@ -69,10 +88,8 @@ def processEvidence(subclaim, ncs, entities, sources):
         if x.uvi is not None:
             soughtV.add(x)
     for doc in evDocs:
-        #print("EV: ", doc)
         strippedIncoming = doc.text.translate(str.maketrans('', '', punctuation)).lower()
         if (strippedExisting == strippedIncoming):
-            #print("DROP :", strippedIncoming)
             continue
         oieAccum = {}
         uviMatchedOies = {}
@@ -80,7 +97,6 @@ def processEvidence(subclaim, ncs, entities, sources):
             oieAccum[oie['V']] = oie
         #pprint(oieAccum)
         if oieAccum:
-            #print("DOC",doc,"OIEACCUM",oieAccum)
             proceeding, sentimentMatches = uviMatch(soughtV,oieAccum, doc._.Uvis)
             if proceeding:
                 #print("UVIMATCHES: ", proceeding)
@@ -94,7 +110,7 @@ def processEvidence(subclaim, ncs, entities, sources):
                         else:
                             uviMatchedOies[verbNode] = [p[1]]
             if uviMatchedOies:
-                nounMatch(uviMatchedOies,sentimentMatches,subclaim,doc)
+                nounMatch(uviMatchedOies,sentimentMatches,subclaim,doc,wikiCache)
 
     return kbElligibleOIEs
 
@@ -104,7 +120,7 @@ def corefCollect(span):
         corefs.extend((x.main for x in tok._.coref_clusters))
     return corefs
 
-def nodeCompare(IargK,IargV,Espan):
+def nodeCompare(IargK,IargV,Espan,wikiCache):
     #print("COMPARING: ", IargV, " with ", Espan)
     #print("stage 1",end=' ')
     sim = compute_similarity(IargV, Espan.span)
@@ -117,21 +133,25 @@ def nodeCompare(IargK,IargV,Espan):
         print("L3a: ", similarity.levenshtein(IargV.text, Espan.span.text) > 0.3, end=' / ')
         if IargV.ents and Espan.span.ents:
             print("L1b: ", compute_similarity(IargV.ents[0],Espan.span.ents[0]) )
-            print("L1c: ", wikidataCompare(IargV.ents[0].text, Espan.span.ents[0].text))
+            print("L1c: ", wikidataCompare(IargV.ents[0], Espan.span.ents[0]))
         print("L2a :", list(IargV.noun_chunks), list(Espan.span.noun_chunks))
         print("L2:", any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))
         print("L3: ", Icorefs, ECorefs)"""
         if (not(IargV.ents or Espan.span.ents) and sim > 0.7) \
-        or (any(similarity.levenshtein(x.root.text, y.root.text) > 0.7 or compute_similarity(x,y) > 0.7 for x in IargV.noun_chunks for y in Espan.span.noun_chunks))\
-        or (IargV.ents and Espan.span.ents and (any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y)) for x in IargV.ents for y in Espan.span.ents))) \
-        or (Icorefs and ECorefs and (any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))):
+        or (any(similarity.levenshtein(x.root.text, y.root.text) > 0.7 for x in IargV.noun_chunks for y in Espan.span.noun_chunks))\
+        or (IargV.ents and Espan.span.ents and (any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y,wikiCache)) for x in IargV.ents+Icorefs for y in Espan.span.ents+ECorefs))):
             #print("TRUE stage 3")
             #print("COMPARING: ", IargV, " with ", Espan, True)
             return True
-    #print(False)
+        """if True or 'wrong direction' in IargV.text:
+            print("Fail:", IargV, " with ", Espan.span)
+            print("IARGVENTS?",IargV.ents, "/ ", "EARGVENTS", Espan.span.ents, "SIM ",sim)
+            print("IARGNOUNCH",IargV.noun_chunks, "/", "Eargvnounch", Espan.span.noun_chunks)
+            print("LEV ",similarity.levenshtein(IargV.text, Espan.span.text),(any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y,wikiCache)) for x in IargV.ents+Icorefs for y in set(Espan.span.ents+ECorefs))))
+    """
     return False
 
-def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
+def nounMatch(oiesDict,sentimentMatches,subclaim,docIn,wikiCache):
     #print("OIEDICT",oiesDict)
     #print("EXISTING", subclaim.kb.kb2)
     for kbEnt in subclaim.kb.kb2:
@@ -142,8 +162,9 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
         verbT,arity,args = splitvarg[0][:-1],splitvarg[0][-1:],splitvarg[1].split(')')[0].split(',')
         verb = subclaim.kb.getEnabledArgBaseC().get(verbT, None)
         for oiesEnt in oiesDict.get(verb,[]):
+            #print(oiesEnt)
             accum = [False] * int(arity)
-            oieIter = sorted(oiesEnt.items())
+            oieIter = list(sorted(oiesEnt.items()))
             for index, EargV in enumerate(args):
                 Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
 
@@ -154,7 +175,7 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
                 #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in oieIter))
                 for IargK, IargV in oieIter:
                     #print("VERB", verb, "IARGV:",IargV, "EARGV", EargV)
-                    if nodeCompare(IargK,IargV,Espan):
+                    if nodeCompare(IargK,IargV,Espan,wikiCache):
                         accum[index] = True
                         # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
                         print(index,": ",IargV, "->", Espan.span)
@@ -164,18 +185,17 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
             if sum(1 for i in accum if i)/int(arity) >= 0.66:
                 modifiers=[]
                 #print("SKB",subclaim.kb.kb2_args)
-                if any('ARGM-NEG' in x for x in oiesDict.values()):
+                if 'ARGM-NEG' in oiesEnt:
                     predNeg = True
                 for mod in subclaim.kb.kb2_args.get(kbEnt.split(" ")[0],[]): #for this predicate, are there modifiers listed? iterate over them
                     #note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
                     #rather than via conjestablish.
                     enrichedModifierNode = subclaim.kb.getEnabledArgBaseC().get(mod.split('(')[1].replace(')',''), None) #Are these modifiers enabled?
                     if enrichedModifierNode is None:
-                        #print("I'm disabled!")
                         continue
                     for IargK, IargV in oieIter:
                         #print("IARGK: ", IargK)
-                        if nodeCompare(IargK, IargV, enrichedModifierNode):
+                        if nodeCompare(IargK, IargV, enrichedModifierNode,wikiCache):
                             modifiers.append(mod)
                             # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
                             #print("MOD FOUND:", IargV, "->", enrichedModifierNode.span)
@@ -191,6 +211,7 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
                 pred = verbT+arity+'('+','.join(newArgs) + ')'
                 if predNeg:
                     pred = '-'+pred
+                    print("PREDNEGGED")
 
                 subclaim.kb.evidenceMap[pred] = docIn
                 for mod in modifiers:
@@ -211,12 +232,12 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn):
                 #print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
                 #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in sentiOIE.items()))
                 for IargK, IargV in sentiOIE.items():
-                    if nodeCompare(IargK, IargV, Espan):
-                        print("SOIES",": ",IargV, "->", Espan.span)
+                    if nodeCompare(IargK, IargV, Espan,wikiCache):
+                        #print("SOIES",": ",IargV, "->", Espan.span)
                         #print("SOIE",sentiOIE)
                         # print(IargK,"SENTIMATCH",sentiMatch)
                         sentiAccum[index] = True
-                        print("SA", sentiAccum)
+                        #print("SA", sentiAccum)
 
     return
 

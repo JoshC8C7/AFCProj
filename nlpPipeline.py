@@ -15,8 +15,7 @@ countY=0
 BATCH_SIZE = 100
 def docUsefullness(doc,miniContext):
     #miniContext = (ncs, entities)
-    leftoversExisting = (x for x in miniContext[1] if x not in miniContext[0])
-    leftoversIncoming = (x for x in doc.noun_chunks if x not in doc.ents)
+    #print(doc)
 
     for i in doc.ents:
         for j in miniContext[1]:
@@ -27,6 +26,9 @@ def docUsefullness(doc,miniContext):
                 countX+=1
                 return True
 
+    leftoversExisting = list(x for x in miniContext[0] if x not in miniContext[1])
+    leftoversIncoming = list(x for x in doc.noun_chunks if x not in doc.ents)
+
     for i in leftoversIncoming:
         for j in leftoversExisting:
             if i.similarity(j) > 0.8 or Levenshtein.ratio(i.lower_,j.lower_) > 0.6:
@@ -34,8 +36,6 @@ def docUsefullness(doc,miniContext):
                 global countY
                 countY+=1
                 return True
-    #print("DROPPING: ", doc)
-    #print("AKFALSE")
     return False
 
 def oieParse(oie, doc):
