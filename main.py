@@ -32,7 +32,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if politiDict[t] == 1: # 'Virginia' in s: #politiDict[t] == 1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
+        if True or politiDict[t] == 1: # 'Virginia' in s: #politiDict[t] == 1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]

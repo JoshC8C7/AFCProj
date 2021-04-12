@@ -13,3 +13,5 @@ what
 where
 why
 how
+usually
+traditionally
