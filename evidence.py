@@ -25,7 +25,6 @@ with open('data/pb2wn.json','r') as inFile:
     pb2wn = json.load(inFile)
 
 def wikidataCompare(e1, e2, cache):
-    print("CACHE: ",cache)
     if all(x.pos_ not in ('PROPN','NOUN') for x in e1) or all(y.pos_ not in ('PROPN','NOUN') for y in e2) or e1.label_ != e2.label_:
         return False
     if e1.label_ is None:
@@ -124,25 +123,27 @@ def nodeCompare(IargK,IargV,Espan,wikiCache):
     #print("COMPARING: ", IargV, " with ", Espan)
     #print("stage 1",end=' ')
     sim = compute_similarity(IargV, Espan.span)
-    if IargK != 'V' and sim > 0.5 and claim.getEdgeStyle(IargK, IargV) != 'dotted':
+    if IargK != 'V' and sim > 0.5 and len(IargV)*5 > len(Espan.span) > len(IargV)//5 and claim.getEdgeStyle(IargK, IargV) != 'dotted':
         Icorefs, ECorefs = corefCollect(IargV), corefCollect(Espan.span)
-        """print("COMPARING: ", IargV, " with ", Espan, True, end=' / ')
-        print("L1: ", not (IargV.ents or Espan.span.ents), sim, sim > 0.7, len(list(IargV.noun_chunks)), len(list(Espan.span.noun_chunks)), not(len(list(IargV.noun_chunks)) and len(list(Espan.span.noun_chunks))) or any(
-             similarity.levenshtein(x.root.text, y.root.text) > 0.7 or compute_similarity(x, y) > 0.9 for x in
-            IargV.noun_chunks for y in Espan.span.noun_chunks), end=' / ')
-        print("L3a: ", similarity.levenshtein(IargV.text, Espan.span.text) > 0.3, end=' / ')
-        if IargV.ents and Espan.span.ents:
-            print("L1b: ", compute_similarity(IargV.ents[0],Espan.span.ents[0]) )
-            print("L1c: ", wikidataCompare(IargV.ents[0], Espan.span.ents[0]))
-        print("L2a :", list(IargV.noun_chunks), list(Espan.span.noun_chunks))
-        print("L2:", any(similarity.levenshtein(x.text, y.text) > 0.5 for x in IargV.ents for y in Espan.span.ents))
-        print("L3: ", Icorefs, ECorefs)"""
-        if (not(IargV.ents or Espan.span.ents) and sim > 0.7) \
-        or (any(similarity.levenshtein(x.root.text, y.root.text) > 0.7 for x in IargV.noun_chunks for y in Espan.span.noun_chunks))\
-        or (IargV.ents and Espan.span.ents and (any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y,wikiCache)) for x in IargV.ents+Icorefs for y in Espan.span.ents+ECorefs))):
-            #print("TRUE stage 3")
-            #print("COMPARING: ", IargV, " with ", Espan, True)
+
+
+        if (not(IargV.ents or Espan.span.ents) and sim > 0.8):
+            print("L1: ", IargV, " with ", Espan.span)
             return True
+        else:
+            c1, c2=0,0
+            v = ((similarity.levenshtein(x.root.text, y.root.text) > 0.7 and len(y.root.text)*5 > len(x.root.text) > len(y.root.text)//5) for x in IargV.noun_chunks for y in
+                 Espan.span.noun_chunks)
+            for x in v:
+                if x: c1+=1
+                else: c2+=1
+            if c1>c2:
+                print("L2: ", IargV, " with ", Espan.span)
+                return True
+            elif IargV.ents and Espan.span.ents and similarity.levenshtein(IargV.text, Espan.span.text) > 0.3 and (any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y,wikiCache)) for x in IargV.ents+Icorefs for y in set(Espan.span.ents+ECorefs))):
+                print("L3: ", IargV, " with ", Espan.span)
+                return True
+    #print(False)
         """if True or 'wrong direction' in IargV.text:
             print("Fail:", IargV, " with ", Espan.span)
             print("IARGVENTS?",IargV.ents, "/ ", "EARGVENTS", Espan.span.ents, "SIM ",sim)
