@@ -1,6 +1,4 @@
-import time
-
-from graphviz import Digraph, Source
+from graphviz import Digraph
 import networkx as nx
 from pydot import graph_from_dot_data
 from logic import KnowledgeBase, getSpanCoref
@@ -198,12 +196,6 @@ class docClaim:
     def extractSubclaims(self):
         #Convert graphviz to networkx.
         G = nx.nx_pydot.from_pydot(graph_from_dot_data(self.graph.source)[0])
-        #print(G.edges(data=True))
-
-        dot = nx.drawing.nx_pydot.to_pydot(G)
-        time.sleep(0.5)
-        #s.view()
-
         claimsList = []
         subtrees = []
 
@@ -237,6 +229,7 @@ class docClaim:
             relRoots = list(filter(lambda x: x in sc, subtreeRoots))
             removedEdges=[]
             removedNodes=[]
+
             #Outbound edges from roots are nearly always erroneous, so they are removed as soon as possible:
             #Also remove any cases of nodes that have entirely dashed input.
             for j in relRoots:

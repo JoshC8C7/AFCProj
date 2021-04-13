@@ -5,14 +5,15 @@ from nlpPipeline import batchProc
 from claim import docClaim
 from webcrawl import nlpFeed
 
+#Politihop-to-standard label conversion, as in Politihop.
 politiDict = {'true':1,'mostly-true':1,'barely-true':-1,'half-true':0,'mostly-false':-1,'pants-fire':-1,'false':-1}
 truthDict = {}
 
-def politihopInput():
+#Handles input for politihop
+def politihopInput(data):
 
-    dateMap = {}
     #Read in input claims
-    df=pd.read_table(path.join("data","Politihop","Politihop_train.tsv"),sep='\t').head(200)
+    df=pd.read_table(path.join("data","Politihop",data),sep='\t').head(200)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -22,27 +23,25 @@ def politihopInput():
         t=row['politifact_label']
         while not s[0].isalpha() or s[0] == " ":
             s=s[1:]
+
+        #Push in name of author to claim where a real person i.e. not a viral image/post
         if s.partition(" ")[0].lower() == "says":
             author = row['author'].replace("Speaker: ", "")
             if True or author in ['Facebook posts', 'Viral image']:
                 s = s.partition(" ")[2]
             else:
                 s= author +" s" + s[1:]
-        #Allows for filtering to debug specific example.
-        #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if politiDict[t] == 1:# and 'Republicans' in s: # 'Virginia' in s: #politiDict[t] == 1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
+
+        if True or politiDict[t] == 1:
             statementSet.add(s)
-        dateMap[s] = None
         truthDict[s] = politiDict[t]
     #print("TD:",truthDict)
-    return statementSet, dateMap, truthDict
+    return statementSet, truthDict
 
 
-def liarInput():
-
-    dateMap = {}
+def liarInput(data):
     #Read in input claims
-    df=pd.read_table(path.join("data","liarliar","train.tsv"),sep='\t').head(200)
+    df=pd.read_table(path.join("data","liarliar",data),sep='\t').head(200)
 
     #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -54,63 +53,75 @@ def liarInput():
             s=s[1:]
         if s.partition(" ")[0].lower() == "says":
                 s = s.partition(" ")[2]
-        if False or 'Wages are on the rise' in s : #or 'Cooper' in s or 'trillion' in s:
-            statementSet.add(s)
-        dateMap[s] = None
+        statementSet.add(s)
         truthDict[s] = politiDict[t]
-    #print("TD:",truthDict)
 
-    return statementSet, dateMap, truthDict
+    return statementSet, truthDict
 
+#Change which dataset to import
 DATA_IMPORT = {'politihop':politihopInput, 'liarliar':liarInput}
 
-def main(name='politihop',format=''):
-    inputFunc = DATA_IMPORT[name]
-    results = []
+def processClaim(doc, limiter):
+    print("CLAIM: ", doc)
+    scLevelResults = []
 
-    statementSet, dateMap, truthDict = inputFunc()
-    docs = batchProc(statementSet,dateMap)
+    #Split claim into subclaim and then logical formulae
+    tlClaim = docClaim(doc)
 
-    for doc in docs:
-        print("CLAIM: ", doc)
-        scLevelResults=[]
-        tlClaim = docClaim(doc)
-        for subclaim in tlClaim.subclaims:
-            print("SUBCLAIM: ", subclaim.roots)
-            queries, ncs, entities = subclaim.kb.prepSearch()
-            sources=[]
-            if format=='pfOnly':
-                sources.extend(nlpFeed(tlClaim.doc.text))
-            else:
-                for q in queries:
-                    sources.extend(nlpFeed(q))
-            evidence.processEvidence(subclaim,ncs,entities,sources)
-            #subclaim.kb.OIEStoKB(logicReadyOIES)
-            result = subclaim.kb.prove()
-            print("RESULTAT", subclaim.doc, result)
-            if result is not None:
-                scLevelResults.append(1 if result else -1)
-            else:
-                scLevelResults.append(0)
-            #input("next...")
-        if scLevelResults:
-            print("sc",scLevelResults)
-            proportion = sum(scLevelResults)/len(scLevelResults)
-            proportion = max(scLevelResults)
-            print("Guessed Truth:", str(proportion), "  Ground Truth:", truthDict[doc.text])
-            results.append((proportionToTruth(proportion), truthDict[doc.text]))
+    #Iterate through generated subclaims and attempt to prove.
+    for subclaim in tlClaim.subclaims:
+
+        #Obtain search terms from processed subclaims
+        queries, ncs, entities = subclaim.kb.prepSearch()
+
+        #Collect evidence from webcrawler, modified by limiter as appropriate.
+        sources = []
+        if limiter is not None and limiter == 'pfOnly':
+            sources.extend(nlpFeed(tlClaim.doc.text))
         else:
-            results.append((5, truthDict[doc.text]))
+            for q in queries:
+                sources.extend(nlpFeed(q))
+
+        #Process collected evidence into knowledge base.
+        evidence.processEvidence(subclaim, ncs, entities, sources)
+
+        #Attempt proof
+        result = subclaim.kb.prove()
+        print("RESULTAT", subclaim.doc, result)
+
+        #Write result back, 1 if true, -1 if false/no proof found*, or error symbol '5'.
+        if result is not None:
+            scLevelResults.append(1 if result else -1)
+        else:
+            scLevelResults.append(5)
+
+    #Determine overall document result from subclaim results.
+    if scLevelResults:
+        print("sc", scLevelResults)
+        proportion = max(scLevelResults)
+        print("Guessed Truth:", str(proportion), "  Ground Truth:", truthDict[doc.text])
+        return ((proportion, truthDict[doc.text]))
+    else:
+        return ((5, truthDict[doc.text]))
+
+
+
+
+def main(name='politihop',data='Politihop_train.tsv',limiter=None):
+    results = []
+    #Read in statements & associated Ground truth
+    statementSet, truthDict = DATA_IMPORT[name](data)
+
+    #Batch-process spaCy on documents
+    docs = batchProc(statementSet)
+
+    #Convert doc to claim, run inference, append results to list
+    for doc in docs:
+        results.append(processClaim(doc, limiter))
+
+    #Return final results
     print(results)
 
-
-def proportionToTruth(proportion):
-    if -0.5 <= proportion <= 0.5:
-        return 0
-    if proportion > 0.5:
-        return 1
-    else:
-        return -1
 
 if __name__ == '__main__':
     main()

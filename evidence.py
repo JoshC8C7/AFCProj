@@ -1,5 +1,4 @@
-from string import punctuation
-import spacy
+from string import punctuation, printable
 from nltk.corpus import sentiwordnet as swn, wordnet as wn
 from nltk.corpus.reader import WordNetError
 from textacy import similarity
@@ -14,8 +13,6 @@ endpoint_url = "https://www.wikidata.org/w/api.php?action=wbsearchentities&searc
 
 nlp = English()
 nlp.add_pipe(nlp.create_pipe("sentencizer"))
-nlp1 = spacy.load('en_core_web_lg')
-nlp1.disable_pipes()
 
 with open('data/pb2wn.json','r') as inFile:
     pb2wn = json.load(inFile)
@@ -26,23 +23,28 @@ def wikidataCompare(e1, e2, cache):
     if e1.label_ is None:
         e1 = e1.root
         e2 = e2.root
-    if e1.text in cache:
+    if e1.text in cache and cache[e1.text] is not None:
         k1 = cache[e1.text]
     else:
         print("polling: ", e1)
         k1 = requests.get(endpoint_url.format(e1.text.replace(" ", "%20"))).json().get('search', [])
-        if k1:
+        if k1 is None:
+            cache[e1.text] = None
+            return False
+        else:
             cache[e1.text] = k1
-        else: return False
 
-    if e2.text in cache:
-        k2=cache[e2.text]
+    if e2.text in cache and cache[e2.text] is not None:
+        k2 = cache[e2.text]
     else:
-        print("Polling: ", e2)
-        k2 = (x.get('id','') for x in requests.get(endpoint_url.format(e2.text.replace(" ", "%20"))).json().get('search',[]))
-        if k2:
+        print("polling: ", e2)
+        k2 = requests.get(endpoint_url.format(e2.text.replace(" ", "%20"))).json().get('search', [])
+        if k2 is None:
+            cache[e2.text] = None
+            return False
+        else:
             cache[e2.text] = k2
-        else: return False
+
     return any(x['id'] in k2 for x in k1)
 
 def numCompare(e1,e2):
@@ -75,7 +77,7 @@ def processEvidence(subclaim, ncs, entities, sources):
     strippedExisting = subclaim.doc.text.translate(str.maketrans('', '', punctuation)).lower()
     evidence = receiveDoc(sources, subclaim.doc)
     urlMap = dict((x[1],x[0]) for x in evidence)
-    evDocs = nlpPipeline.batchProc(list(x[1] for x in evidence),{},urlMap,(ncs,entities))
+    evDocs = nlpPipeline.batchProc(list(x[1] for x in evidence),urlMap,(ncs,entities))
     soughtV = set()
     kbElligibleOIEs = []
 
@@ -124,7 +126,7 @@ def nodeCompare(IargK,IargV,Espan,wikiCache):
 
 
         if (not(IargV.ents or Espan.span.ents) and sim > 0.8):
-            print("L1: ", IargV, " with ", Espan.span)
+            #print("L1: ", IargV, " with ", Espan.span)
             return True
         else:
             c1, c2=0,0
@@ -134,10 +136,10 @@ def nodeCompare(IargK,IargV,Espan,wikiCache):
                 if x: c1+=1
                 else: c2+=1
             if c1>c2:
-                print("L2: ", IargV, " with ", Espan.span)
+                #print("L2: ", IargV, " with ", Espan.span)
                 return True
             elif IargV.ents and Espan.span.ents and similarity.levenshtein(IargV.text, Espan.span.text) > 0.3 and (any(numCompare(x,y) and (similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x,y,wikiCache)) for x in IargV.ents+Icorefs for y in set(Espan.span.ents+ECorefs))):
-                print("L3: ", IargV, " with ", Espan.span)
+                #print("L3: ", IargV, " with ", Espan.span)
                 return True
     #print(False)
         """if True or 'wrong direction' in IargV.text:
@@ -173,8 +175,7 @@ def nouns2KB(oiesEnt, arity, verbT, args, kb, wikiCache, kbEnt, docIn, predNeg=F
         # print("SKB",subclaim.kb.kb2_args)
         if 'ARGM-NEG' in oiesEnt:
             predNeg = True
-        for mod in kb.kb2_args.get(kbEnt.split(" ")[0],
-                                            []):  # for this predicate, are there modifiers listed? iterate over them
+        for mod in kb.kb2_args.get(kbEnt.split(" ")[0],[]):  # for this predicate, are there modifiers listed? iterate over them
             # note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
             # rather than via conjestablish.
             enrichedModifierNode = kb.getEnabledArgBaseC().get(mod.split('(')[1].replace(')', ''),
@@ -222,8 +223,9 @@ def nounMatch(oiesDict,sentimentMatches,subclaim,docIn,wikiCache):
         for oiesEnt in oiesDict.get(verb,[]): #Iterate over incoming oies
             nouns2KB(oiesEnt,arity, verbT, args,subclaim.kb,wikiCache,kbEnt, docIn)
 
-        for sentiOIE, sentiMatchDirection in sentimentMatches:
-            nouns2KB(sentiOIE,arity,verbT,args,subclaim.kb,wikiCache,kbEnt,docIn,predNeg=sentiMatchDirection)
+        #for sentiOIE, sentiMatchDirection in sentimentMatches:
+           # print("Hello")
+            #nouns2KB(sentiOIE,arity,verbT,args,subclaim.kb,wikiCache,kbEnt,docIn)
     return
 
 def checkGrammatical(inSpan):
@@ -291,7 +293,7 @@ def receiveDoc(sources, docText):
     sentences = []
     for source in sources:
         url = source[0]
-        s2 = ''.join(filter(lambda x: x in string.printable and x not in ['{','}'], source[1]))
+        s2 = ''.join(filter(lambda x: x in printable and x not in ['{','}'], source[1]))
         if len(s2) < 5:
             continue
         doc = nlp(s2)

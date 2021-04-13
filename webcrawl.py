@@ -114,7 +114,7 @@ def dumpToDisk():
         pickle.dump(web_cache,cache)
 
 if __name__ == "__main__":
-    resp = input("Cache management. Run main.py for standard route. Enter 'clear' to clear URL cache, 'inspect' to view it, 'create' to re-form the trusted source list, or 'exit'.")
+    resp = input("Cache management. Enter 'clear' to clear URL cache, 'inspect' to view it, 'create' to re-form the trusted source list, or 'exit'.")
     if resp == 'inspect':
         with open(CACHE_FILE, 'rb') as cache:
             print(pickle.load(cache))

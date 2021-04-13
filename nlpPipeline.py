@@ -1,28 +1,18 @@
 import spacy
 from spacy.matcher import Matcher
 from spacy.tokens import Doc, Span
-import torch
-from pprint import pprint
 import textacy.similarity as ts
 from transformer_srl import dataset_readers,models,predictors
 import  neuralcoref
 import Levenshtein
-countX=0
-countY=0
 #This is a module rather than a class to enforce singleton behaviour of the models. The nlp model is used across the
 #files and so should be accessible from each module rather than through a single object.
 BATCH_SIZE = 100
 def docUsefullness(doc,miniContext):
-    #miniContext = (ncs, entities)
-    #print(doc)
-
     for i in doc.ents:
         for j in miniContext[1]:
             threshold = 0.5 if i.label_ == j.label_ else 0.7
-            if ts.token_sort_ratio(i.lower_,j.lower_) > threshold:# or i.similarity(j) > threshold:
-                #print("Proceeding to OIE")
-                global countX
-                countX+=1
+            if ts.token_sort_ratio(i.lower_,j.lower_) > threshold:
                 return True
 
     leftoversExisting = list(x for x in miniContext[0] if x not in miniContext[1])
@@ -31,9 +21,6 @@ def docUsefullness(doc,miniContext):
     for i in leftoversIncoming:
         for j in leftoversExisting:
             if i.similarity(j) > 0.8 or Levenshtein.ratio(i.lower_,j.lower_) > 0.6:
-                #print("Proceeding to OIE")
-                global countY
-                countY+=1
                 return True
     return False
 
@@ -48,7 +35,6 @@ def oieParse(oie, doc):
                 all(x not in oiespans for x in ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']) > 0:
             #print("axing ", oiespans)
             continue
-        #print(oiespans['V'], " ",e['frame'], " ", e['frame_score'])
         frames[oiespans['V']] = e['frame']
         oieSubclaims.append(oiespans)
 
@@ -59,16 +45,7 @@ def oieParse(oie, doc):
 
     return doc
 
-#todo move this to be inside spacy's pipeline possibly
 def oieBatch(docs):
-    """newDocs = []
-    for doc in docs:
-        newDocs.append(oiePipe(doc))"""
-
-    #Allennlp is slightly incomplete in that there's no batch text->prediction functionality, so
-    #instead a small hack to impersonate a json:
-    #todo  possibly fix allennlp if the licence allows it so it doesn't drop all the token info and then just retokenize everything.
-
     batched_jsons = []
     oies=[]
     index = 0
@@ -78,7 +55,6 @@ def oieBatch(docs):
         index+=BATCH_SIZE
 
     for i in batched_jsons:
-        #print(i)
         oies.extend(predictorOIE.predict_batch_json(i))
     newDocs = (list(map(oieParse,oies,docs)))
 
@@ -98,7 +74,6 @@ nlp = spacy.load('en_core_web_lg')
 print("..")
 Doc.set_extension("Uvis", default={})
 Doc.set_extension("OIEs", default={})
-Doc.set_extension("rootDate",default='')
 Doc.set_extension("url",default='')
 # Run connective extractor over input text and store result in doc._.extract_connectives.
 coref = neuralcoref.NeuralCoref(nlp.vocab)
@@ -113,35 +88,24 @@ print("Models Loaded")
 
 def naiveQuotes(doc):
     matches=matcher(doc)
-    if matches:
-        #print("DROP:", doc)
-        return True
-    else:
-        return False
+    return bool(matches)
 
-
-def batchProc(statements, dateMap, urlMap=None, miniContext = None):
+def batchProc(statements, urlMap=None, miniContext = None):
     #See 25 - http://assets.datacamp.com/production/course_8392/slides/chapter3.pdf
     if urlMap is None: urlMap = {}
     docsOut = []
-    inputData = list(zip(statements,({'date':dateMap.get(s,None), 'url':urlMap.get(s,None)} for s in statements)))
+    inputData = list(zip(statements,({'url':urlMap.get(s,None)} for s in statements)))
     #print(len(inputData))
     if miniContext is not None:
         with nlp.disable_pipes(['oiePipe']):
             doc_pool = []
             for doc, context in nlp.pipe(inputData,as_tuples=True):
-                doc._.rootDate = context['date']
                 doc._.url = context['url']
                 if docUsefullness(doc,miniContext) and not naiveQuotes(doc) and len(doc) < 500:
                     doc_pool.append(doc)
             docsOut=oieBatch(doc_pool)
     else:
-        for doc, context in nlp.pipe(inputData, as_tuples=True):
-            doc._.rootDate = context['date']
-            docsOut.append(doc)
-    print(" /////////////////////////////////////////////////////////////////////////////")
-    print("COUNTx:",countX)
-    print("COUNTy:",countY)
+        docsOut = list(x[0] for x in nlp.pipe(inputData, as_tuples=True))
     return docsOut
 
 def tags2spans(tags,docIn):

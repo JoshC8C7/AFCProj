@@ -1,6 +1,6 @@
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
-from string import ascii_lowercase, punctuation
+from string import punctuation
 from spacy.tokens.token import Token
 import claim
 
@@ -137,68 +137,13 @@ class KnowledgeBase():
         #2b. Case 2 applies to multiple edges - multiple gaps left e.g. sells(x,y).
         #3. Multiple verbs required to establish 1 arg (i.e. multiple purple edges), the below verb is implied by a conjunction of parent verbs. 'when(launch(fbi, investigation),tuesday) & sell(ducks,children) -> make(x, clear_that) '
         #FOR MODIFIERS - form a new term wrapping the verb in them e.g. starting with launch(fbi, investigation) if it happened on tuesday, we add '& when(launch(fbi,investigation), tuesday))'
-        #todo cyan and red nodes?
-        if len(self.roots) ==0:
-            #print("No roots")
-            return
+        if len(self.roots) == 0: return
         #Create the root implication as the conjunction of the verbs that feed into the root.
         rootImpl = self.conjEstablish(self.roots,seen) + ' -> argF(root)'
         self.addToKb(rootImpl)
         self.ruleLength = len(self.kb)
-        #print("KBRULES ", self.kb)
-        #self.addToKb('argF(root) ->'+ self.conjEstablish(self.roots,seen))
+
         return
-
-
-    def temporalReasoning(self,span, modID):
-        #print("Relative date:", span.doc._.rootDate)
-        # Temporal reasoning imports
-        from dateutil.relativedelta import relativedelta, MO
-
-        from datetime import timedelta
-        import dateutil.parser as parser
-
-        if len(span.ents) + len(list(span.noun_chunks)) == 0 and span[0].tag_ == 'RB':
-            #print("OUT:", span, "  ", span[0].tag_, span[0].dep_)
-            return None
-
-        date=None
-        if span.doc._.rootDate is not None:
-            try:
-                date = parser.parse(span.doc._.rootDate)
-            except ValueError:
-                pass
-
-        modType='TMP'
-        if any(x in span.lower_ for x in ['before', 'until', 'prior to']):
-            modType = 'BEFORE'
-        elif any(x in span.lower_ for x in ['during','whilst','when','over']):
-            modType = 'DURING'
-        elif any(x in span.lower_ for x in ['after','since','subsequent']):
-            modType = 'AFTER'
-
-        #Check if arg is an internal node:
-        if self.claimG.in_edges(nbunch=modID):
-            return (modType,modID)
-
-        #Else do temporal reasoning:
-        if date is None:
-            for ent in span.ents:
-                if ent.label_ in ["TIME","DATE"]:
-
-                    try:
-                        date = parser.parse(ent.text, dayfirst=True) #todo this needs to return a span so the argId works - it should just take the id of what its replacing or something
-                    except ValueError:
-                        date = ent
-                    #print(ent.text, "/ ", ent.label_, "/",resolvedDate)
-        else:
-            raise NotImplementedError
-        return
-        return (modType, self.argFunc(date))
-
-
-
-
 
     #For multiple verbs feeding one argument, the argument is implied by the conjunction of the subtrees rooted at the verbs
     #So to establish an argument which has incoming edges, we must establish all incoming edges.
@@ -225,10 +170,7 @@ class KnowledgeBase():
 
         #if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
         if len(argList) > 1:
-            #todo there's some duplication of search terms going on here - see John Bolton
             self.searchTerms.append((root,argList))
-        """        else:
-            print("Skipsies",root,argList)"""
 
         #Now check for any non-leaf entries or modifiers
         count=0
@@ -264,18 +206,6 @@ class KnowledgeBase():
                 modValID = edge[0]
                 modVal = self.argBaseC[modValID].span
 
-                """if modType == 'TMP':
-                    if 'never' in modVal.lower_:
-                        predNeg = True
-                    else:
-                        #send to temporal reasoning
-                        #print("Temporal: ",modVal, list(modVal.noun_chunks), modVal.ents)
-                        ret = self.temporalReasoning(modVal,modValID)
-                        print("RET",ret)
-                        if ret is not None:
-                            modifiers.append(ret)
-                            modType = ret[0]
-                            modValID = ret[1]"""
                 if modType in ['TMP']+['MOD','ADV','PRP', 'CAU', 'LOC']:
                     if 'never' in modVal.lower_:
                         predNeg = True
@@ -346,20 +276,13 @@ class KnowledgeBase():
                         ysplit = y[1].replace(')','').replace('(','').split(',')
                         prfParsed.append((int(ysplit[0]),int(ysplit[1])))
 
-            #print(self.ruleLength)
-            """for ind, a in enumerate(prfParsed):
-                if ind <= self.ruleLength:
-                    print("(Rule) ",end='')
-                print(str(ind+1), a)"""
             path = backtracker(prfParsed,self.ruleLength)
             for index, i in enumerate(path):
                 if index > 0 and index < len(path) - 1: print("-->--",end="")
                 if type(i) is not tuple:
                     print(self.evidenceMap[i], " @ ", self.evidenceMap[i]._.url,end='')
-                #else: print(i)
             print()
         return p1
-        #print(rpc.proof(simplify=True))
 
 def backtracker(prf, rl):
     from collections import deque
@@ -378,58 +301,3 @@ def backtracker(prf, rl):
             queue.extend(step)
     path.reverse()
     return path
-
-#Side-entry method to test nltk's proof systems.
-if __name__ == '__main__':
-    print("main")
-    ns = expr.fromstring('launch(t,u) & make(x,y) -> Root')
-    #print(type(expr.fromstring('walk(P)', type_check=True).argument))
-    #'walk(P)' #<class 'nltk.sem.logic.FunctionVariableExpression'>
-    #'walk(pablo)' #<class 'nltk.sem.logic.ConstantExpression'>
-    #'walk(a)'-> #<class 'nltk.sem.logic.IndividualVariableExpression'>
-    kb = []
-
-    #Examples: argF is that a certain nodes prerequesites are satisfied.
-
-    #Rules:
-
-    #kb.append(expr.fromstring('launch(fbi, investigation) & when(launch(fbi, investigation),tuesday) & how(launch(fbi,investigation), reluctantly) & sell(ducks,children) -> make(x, clear_that) ')) #Having both parent args -> right child arg implied
-    #kb.append(expr.fromstring('make(IG_report, clear_that) -> argF(root)')) #Having both parent args -> right (and only) child implied.
-
-    c = expr.fromstring('argF(root)')
-    """z1 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton)')
-    z2 = expr.fromstring('6X7Xasked(0X4XTheDemocratcontrolledHouse,9X11Xtotestify,7X9XJohnBolton) -> argF(root)')
-    kb.append(z1)
-    kb.append(z2)
-    print(type(z1))
-    print(ResolutionProverCommand(c, kb).prove(verbose=False))"""
-
-
-    #Then to satisfy...
-    #kb.append(expr.fromstring('when(launch(fbi, investigation), tuesday)')) #As this is a leaf and one of the arguments doesn't involve further nodes/a subtree, both args are offered here #1.
-
-    #rules
-    kb.append(expr.fromstring('sells(cake,bob) & wants(cake,bob) -> argF(root)'))
-    kb.append(expr.fromstring('has(cake,shop) & open(shop) -> sells(cake,x)'))
-
-    #evidence
-    kb.append(expr.fromstring('open(shop)'))
-    kb.append(expr.fromstring('wants(cake,bob)'))
-    kb.append(expr.fromstring('has(cake,shop)'))
-
-
-
-    #Code to run it....
-    rpc=ResolutionProverCommand(c,kb)
-    rpc.prove(verbose=True)
-
-
-    #todo when the proof fails, we get the remaining terms to focus on proving - then see if we can unify that even partially with something to create the 'new front', need to see what else is known but not used.
-    #Notice how X(lobsters) is an entry above but isn't used. We know this because 5 doesn't make a further appearence on the right - this is how you can extract the new front.
-    #Can consider moving away from NLTK - not any real reason to be bound to it.
-
-
-    """kb=[]
-    kb.append(expr.fromstring('a -> True'))
-    c = expr.fromstring('b')
-    print(ResolutionProverCommand(c, kb).prove(verbose=True))"""
