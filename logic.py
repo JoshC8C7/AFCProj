@@ -1,4 +1,3 @@
-from nltk import Prover9Command, Prover9
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
 from string import ascii_lowercase, punctuation
@@ -13,8 +12,6 @@ def getSpanCoref(span):
                 corefSet.add(cf)
     return list(corefSet)
 
-p = Prover9()
-p.config_prover9(binary_location='.')
 class KnowledgeBase():
 
     prover = None
@@ -327,13 +324,9 @@ class KnowledgeBase():
         return predicate
 
 
-    def prove(self,system='res'):
+    def prove(self):
         print("proving....")
-        if system == 'res':
-            resProv = ResolutionProverCommand
-        else:
-            resProv = Prover9Command
-        rpc = resProv(goal=self.c,assumptions=self.kb)
+        rpc = ResolutionProverCommand(goal=self.c,assumptions=self.kb)
         p1 = rpc.prove(verbose=True)
         if p1:
             prf = rpc.proof().replace(" ", "").split("\n")

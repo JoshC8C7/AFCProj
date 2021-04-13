@@ -167,23 +167,6 @@ class docClaim:
                 else:
                     verbSet.add(argV)
 
-        #Add connectives
-        for edge in self.doc._.ConnectiveEdges:
-            G.node(self.argID(edge.start), edge.start.text)
-            G.node(self.argID(edge.end), edge.end.text)
-            G.edge(self.argID(edge.start), self.argID(edge.end), color=edge.colours[edge.connType], label=edge.connType, style=getEdgeStyle(edge.connType, edge.end))
-
-            if edge.connType == 'IF':
-                raise NotImplementedError
-                #todo fix these 3 lines - the 'TV' including example ends up with having not a verb as the parent of the root.
-                #argSet.add(edge.start)
-                #argSet.add(edge.end)
-                #verbSet.add(edge.end)
-                None
-
-            elif edge.connType == 'OR':
-                verbSet.add(edge.start)
-                verbSet.add(edge.end)
 
         #Handle 'purple' edges - i.e. edges that link a verb rooting a subtree (of size >= 1) to the argument that they
         #imply. Only the shortest possible existing argument can be implied by a root, otherwise the tree becomes less tree-like.
@@ -205,9 +188,6 @@ class docClaim:
                 H.node(node[0],node[1])
             for edge in corefEdges:
                 H.edge(edge[0],edge[1],color='green',label=edge[2])
-            s=Source(H,filename='fish2.gv',format='pdf')
-            s.view()
-            #H.save(filename=(str(hash(self.doc))))
 
         return G
 
@@ -221,7 +201,6 @@ class docClaim:
         #print(G.edges(data=True))
 
         dot = nx.drawing.nx_pydot.to_pydot(G)
-        s = Source(dot, filename='fisht.gv', format='pdf')
         time.sleep(0.5)
         #s.view()
 
@@ -250,7 +229,6 @@ class docClaim:
             for x in sc.edges(data=True):
                 if not x[2] is int:
                     if x[2].get("label","") in ['ARGMxTMP']:
-                        s = Source(dot, filename='fish2.gv', format='pdf')
                         #s.view()
                         break
 

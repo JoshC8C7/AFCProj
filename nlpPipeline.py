@@ -2,7 +2,6 @@ import spacy
 from spacy.matcher import Matcher
 from spacy.tokens import Doc, Span
 import torch
-import connectives as con
 from pprint import pprint
 import textacy.similarity as ts
 from transformer_srl import dataset_readers,models,predictors
@@ -99,14 +98,12 @@ nlp = spacy.load('en_core_web_lg')
 print("..")
 Doc.set_extension("Uvis", default={})
 Doc.set_extension("OIEs", default={})
-Doc.set_extension("ConnectiveEdges", default=[])
 Doc.set_extension("rootDate",default='')
 Doc.set_extension("url",default='')
 # Run connective extractor over input text and store result in doc._.extract_connectives.
 coref = neuralcoref.NeuralCoref(nlp.vocab)
 nlp.add_pipe(coref, name='neuralcoref')
 nlp.add_pipe(oiePipe,name='oiePipe',last=True)
-nlp.add_pipe(con.extractConnectives, name='extract_connectives', last=True)
 
 matcher = Matcher(nlp.vocab)
 matcher.add("quotes",[[{'ORTH': '"'},{'IS_ASCII': True, 'OP': '*'}]])
@@ -130,7 +127,7 @@ def batchProc(statements, dateMap, urlMap=None, miniContext = None):
     inputData = list(zip(statements,({'date':dateMap.get(s,None), 'url':urlMap.get(s,None)} for s in statements)))
     #print(len(inputData))
     if miniContext is not None:
-        with nlp.disable_pipes(['extract_connectives','oiePipe']):
+        with nlp.disable_pipes(['oiePipe']):
             doc_pool = []
             for doc, context in nlp.pipe(inputData,as_tuples=True):
                 doc._.rootDate = context['date']

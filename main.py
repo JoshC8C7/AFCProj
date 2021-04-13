@@ -1,12 +1,10 @@
-from pprint import pprint
-
 import pandas as pd
 from os import path
-
 import evidence
 from nlpPipeline import batchProc
 from claim import docClaim
-from webcrawl import nlpFeed, dumpToCache
+from webcrawl import nlpFeed
+
 politiDict = {'true':1,'mostly-true':1,'barely-true':-1,'half-true':0,'mostly-false':-1,'pants-fire':-1,'false':-1}
 truthDict = {}
 
@@ -32,7 +30,7 @@ def politihopInput():
                 s= author +" s" + s[1:]
         #Allows for filtering to debug specific example.
         #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
-        if True or politiDict[t] == 1: # 'Virginia' in s: #politiDict[t] == 1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
+        if politiDict[t] == 1:# and 'Republicans' in s: # 'Virginia' in s: #politiDict[t] == 1:# and 'Russians' not in s:# and 'climate' in s: #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
         truthDict[s] = politiDict[t]
@@ -56,8 +54,6 @@ def liarInput():
             s=s[1:]
         if s.partition(" ")[0].lower() == "says":
                 s = s.partition(" ")[2]
-        #Allows for filtering to debug specific example.
-        #if True or any(x in s for x in ['ever','far this','finally','just','newly','now','one day','one time','repeatedly','then','when']) and any(x !=" " for x in s):
         if False or 'Wages are on the rise' in s : #or 'Cooper' in s or 'trillion' in s:
             statementSet.add(s)
         dateMap[s] = None
@@ -78,10 +74,7 @@ def main(name='politihop',format=''):
     for doc in docs:
         print("CLAIM: ", doc)
         scLevelResults=[]
-        try:
-            tlClaim = docClaim(doc)
-        except NotImplementedError:
-            continue
+        tlClaim = docClaim(doc)
         for subclaim in tlClaim.subclaims:
             print("SUBCLAIM: ", subclaim.roots)
             queries, ncs, entities = subclaim.kb.prepSearch()

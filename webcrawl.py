@@ -8,7 +8,6 @@ from spacy.pipeline import Sentencizer
 import tokens
 
 BING_FREE_KEY = tokens.BING_FREE_KEY
-GOOGLE_API_KEY = tokens.GOOGLE_API_KEY
 BING_S1_KEY = tokens.BING_S1_KEY
 
 CACHE_FILE='data/SearchCache.pickle'
@@ -21,15 +20,6 @@ if os.path.exists(CACHE_FILE):
     with open(CACHE_FILE, 'rb') as cache:
         web_cache = pickle.load(cache)
         print("Web Cache loaded")
-
-def googleQ(term):
-    print("searching ",term)
-    num = 5
-    url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx=be06938b6f07a2eb1&q={term}&num={num}"
-    data = requests.get(url).json()
-    found = data.get("items")
-
-    return list(i['link'] for i in found)
 
 def politifactOnly(tlClaimtext):
     time.sleep(1)
@@ -58,7 +48,7 @@ def bingParse(term, key):
     else:
         return list(i['url'] for i in vals)
 
-search_opts = {'google':googleQ, 'bingFree':bingFree,'bingS1':bingS1, 'pfOnly':politifactOnly}
+search_opts = {'bingFree':bingFree,'bingS1':bingS1, 'pfOnly':politifactOnly}
 
 
 def searchFetch(term):
@@ -75,6 +65,7 @@ def searchFetch(term):
 
 
 def nlpFeed(t):
+    freshCache = True
     sources = set()
     config = Config()
     config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36'
@@ -99,28 +90,31 @@ def nlpFeed(t):
                     sources.add((url, body))
                     if body not in web_cache:
                         web_cache[url] = body
+                        freshCache = False
 
                 else:
                     article = Article(url,config=config, language='en')
                     article.download()
                     article.parse()
                     sources.add((url,article.text))
-                    print(article.text)
+                    #print(article.text)
                     if article.text not in web_cache:
                         web_cache[url] = article.text
+                        freshCache = False
 
             except ArticleException:
                 print("Couldn't fetch: ", url)
                 web_cache[url] = ''
-    dumpToCache()
+                freshCache = False
+    if not freshCache: dumpToDisk()
     return sources
 
-def dumpToCache():
+def dumpToDisk():
     with open(CACHE_FILE, 'wb') as cache:
         pickle.dump(web_cache,cache)
 
 if __name__ == "__main__":
-    resp = input("Cache management. Run main.py for standard route. Enter 'clear' to clear URL cache, 'inspect' to view it, or 'exit'.")
+    resp = input("Cache management. Run main.py for standard route. Enter 'clear' to clear URL cache, 'inspect' to view it, 'create' to re-form the trusted source list, or 'exit'.")
     if resp == 'inspect':
         with open(CACHE_FILE, 'rb') as cache:
             print(pickle.load(cache))
@@ -128,36 +122,31 @@ if __name__ == "__main__":
         with open(CACHE_FILE, 'wb') as cache:
             pickle.dump({},cache)
         print("Cache cleared")
+    elif resp == 'create':
+        import json
+        import csv
+        safe =[]
+        with open('data/sources/csources.json') as json_file:
+            data = json.load(json_file)
+            for pk, pv in data.items():
+                if pv.get('r',"") in ("VH","H","MF"):
+                    print(pk, pv['r'])
+                    safe.append([pk])
 
+        with open('data/sources/wikiS.csv') as wiki_file:
+            reader = csv.reader(wiki_file)
+            inList = list(reader)[1:]
+        print(inList)
+        for y in inList:
+            x=y[0]
+            if x[-1] == '/':
+                print(x[:-1])
+                safe.append([x[:-1]])
+            else:
+                print(x)
+                safe.append([x])
 
-"""
-def create():
-
-    import json
-    import csv
-    safe =[]
-    with open('data/sources/csources.json') as json_file:
-        data = json.load(json_file)
-        for pk, pv in data.items():
-            if pv.get('r',"") in ("VH","H","MF"):
-                print(pk, pv['r'])
-                safe.append([pk])
-
-    with open('data/sources/wikiS.csv') as wiki_file:
-        reader = csv.reader(wiki_file)
-        inList = list(reader)[1:]
-    print(inList)
-    for y in inList:
-        x=y[0]
-        if x[-1] == '/':
-            print(x[:-1])
-            safe.append([x[:-1]])
-        else:
-            print(x)
-            safe.append([x])
-
-    print(safe)
-    with open('data/sources/trusted.csv','w+',newline='') as f:
-        writer = csv.writer(f)
-        writer.writerows(safe)
-        """
+        print(safe)
+        with open('data/sources/trusted.csv','w+',newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(safe)

@@ -1,13 +1,9 @@
-import string
-from pprint import pprint
 from string import punctuation
 import spacy
-from fuzzysearch import find_near_matches
-from nltk.corpus import wordnet as wn
-import networkx as nx
+from nltk.corpus import sentiwordnet as swn, wordnet as wn
+from nltk.corpus.reader import WordNetError
 from textacy import similarity
 import claim
-import Levenshtein
 
 
 import json
@@ -152,94 +148,82 @@ def nodeCompare(IargK,IargV,Espan,wikiCache):
     """
     return False
 
+def nouns2KB(oiesEnt, arity, verbT, args, kb, wikiCache, kbEnt, docIn, predNeg=False):
+    #print("OIESENT ", oiesEnt)
+    accum = [False] * int(arity)
+    oieIter = list(sorted(oiesEnt.items()))
+    for index, EargV in enumerate(args):
+        Espan = kb.getEnabledArgBaseC().get(EargV, None)
+
+        if Espan is None:
+            # print("failed ", EargV)
+            continue
+        # print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
+        # print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in oieIter))
+        for IargK, IargV in oieIter:
+            # print("VERB", verb, "IARGV:",IargV, "EARGV", EargV)
+            if nodeCompare(IargK, IargV, Espan, wikiCache):
+                accum[index] = True
+                # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
+                #print(index, ": ", IargV, "->", Espan.span)
+
+    # print(accum, sum(1 for i in accum if i)/int(arity))
+    if sum(1 for i in accum if i) / int(arity) >= 0.66:
+        modifiers = []
+        # print("SKB",subclaim.kb.kb2_args)
+        if 'ARGM-NEG' in oiesEnt:
+            predNeg = True
+        for mod in kb.kb2_args.get(kbEnt.split(" ")[0],
+                                            []):  # for this predicate, are there modifiers listed? iterate over them
+            # note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
+            # rather than via conjestablish.
+            enrichedModifierNode = kb.getEnabledArgBaseC().get(mod.split('(')[1].replace(')', ''),
+                                                                        None)  # Are these modifiers enabled?
+            if enrichedModifierNode is None:
+                continue
+            for IargK, IargV in oieIter:
+                # print("IARGK: ", IargK)
+                if nodeCompare(IargK, IargV, enrichedModifierNode, wikiCache):
+                    modifiers.append(mod)
+                    # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
+                    # print("MOD FOUND:", IargV, "->", enrichedModifierNode.span)
+
+        newArgs = []
+        for index, ent in enumerate(accum):
+            if True or ent:
+                newArgs.append(args[index])
+            else:
+                fv = kb.getFreeVar()
+                newArgs.append(fv)
+
+        pred = verbT + arity + '(' + ','.join(newArgs) + ')'
+        if predNeg:
+            pred = '-' + pred
+            #print("PREDNEGGED")
+
+        kb.evidenceMap[pred] = docIn
+        for mod in modifiers:
+            pred += ' &' + mod
+            kb.evidenceMap[mod] = docIn
+        kb.addToKb(pred)
+        #print("NEW EVIDENCE: ", pred, "----->", docIn, " @ ", docIn._.url)
+
+    return
+
 def nounMatch(oiesDict,sentimentMatches,subclaim,docIn,wikiCache):
     #print("OIEDICT",oiesDict)
     #print("EXISTING", subclaim.kb.kb2)
-    for kbEnt in subclaim.kb.kb2:
+    for kbEnt in subclaim.kb.kb2: #Iterate over KB rules
         #print("KBENT",kbEnt)
-        predNeg = False
         kbEnt = kbEnt.replace('-','')
         splitvarg = kbEnt.split('(')
         verbT,arity,args = splitvarg[0][:-1],splitvarg[0][-1:],splitvarg[1].split(')')[0].split(',')
         verb = subclaim.kb.getEnabledArgBaseC().get(verbT, None)
-        for oiesEnt in oiesDict.get(verb,[]):
-            #print(oiesEnt)
-            accum = [False] * int(arity)
-            oieIter = list(sorted(oiesEnt.items()))
-            for index, EargV in enumerate(args):
-                Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
+        for oiesEnt in oiesDict.get(verb,[]): #Iterate over incoming oies
+            nouns2KB(oiesEnt,arity, verbT, args,subclaim.kb,wikiCache,kbEnt, docIn)
 
-                if Espan is None:
-                    #print("failed ", EargV)
-                    continue
-                #print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
-                #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in oieIter))
-                for IargK, IargV in oieIter:
-                    #print("VERB", verb, "IARGV:",IargV, "EARGV", EargV)
-                    if nodeCompare(IargK,IargV,Espan,wikiCache):
-                        accum[index] = True
-                        # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
-                        print(index,": ",IargV, "->", Espan.span)
-
-
-            #print(accum, sum(1 for i in accum if i)/int(arity))
-            if sum(1 for i in accum if i)/int(arity) >= 0.66:
-                modifiers=[]
-                #print("SKB",subclaim.kb.kb2_args)
-                if 'ARGM-NEG' in oiesEnt:
-                    predNeg = True
-                for mod in subclaim.kb.kb2_args.get(kbEnt.split(" ")[0],[]): #for this predicate, are there modifiers listed? iterate over them
-                    #note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
-                    #rather than via conjestablish.
-                    enrichedModifierNode = subclaim.kb.getEnabledArgBaseC().get(mod.split('(')[1].replace(')',''), None) #Are these modifiers enabled?
-                    if enrichedModifierNode is None:
-                        continue
-                    for IargK, IargV in oieIter:
-                        #print("IARGK: ", IargK)
-                        if nodeCompare(IargK, IargV, enrichedModifierNode,wikiCache):
-                            modifiers.append(mod)
-                            # print("spanSim:", fv.similarity(span.span), " incomingEnts:",fv.ents, " existingents:",span.span.ents)
-                            #print("MOD FOUND:", IargV, "->", enrichedModifierNode.span)
-
-                newArgs = []
-                for index, ent in enumerate(accum):
-                    if True or ent:
-                        newArgs.append(args[index])
-                    else:
-                        fv = subclaim.kb.getFreeVar()
-                        newArgs.append(fv)
-
-                pred = verbT+arity+'('+','.join(newArgs) + ')'
-                if predNeg:
-                    pred = '-'+pred
-                    print("PREDNEGGED")
-
-                subclaim.kb.evidenceMap[pred] = docIn
-                for mod in modifiers:
-                    pred += ' &' + mod
-                    subclaim.kb.evidenceMap[mod] = docIn
-                subclaim.kb.addToKb(pred)
-                print("NEW EVIDENCE: ", pred, "----->", docIn, " @ ", docIn._.url)
-
-        sentiAccum = [False]*int(arity)
         for sentiOIE, sentiMatchDirection in sentimentMatches:
-            #print("SxS",sentiOIE, "->", sentiMatchDirection)
-            #available: verb = the verb this was matched on
-            for index, EargV in enumerate(args):
-                Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
-                if Espan is None:
-                    #print("failed ", EargV)
-                    continue
-                #print(verbT, "ARGS", EargV, Espan.span.ents, corefCollect(Espan.span))
-                #print(list(xk+' '+xv.text+ ' '+ str(corefCollect(xv)) for xk,xv in sentiOIE.items()))
-                for IargK, IargV in sentiOIE.items():
-                    if nodeCompare(IargK, IargV, Espan,wikiCache):
-                        #print("SOIES",": ",IargV, "->", Espan.span)
-                        #print("SOIE",sentiOIE)
-                        # print(IargK,"SENTIMATCH",sentiMatch)
-                        sentiAccum[index] = True
-                        #print("SA", sentiAccum)
-
+            nouns2KB(sentiOIE,arity,verbT,args,subclaim.kb,wikiCache,kbEnt,docIn,predNeg=sentiMatchDirection)
     return
 
 def checkGrammatical(inSpan):
@@ -259,7 +243,6 @@ def compute_similarity(doc1, doc2):
     vector2 = np.divide(vector2, len(doc2))
     return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
 
-from nltk.corpus import sentiwordnet as swn
 
 #Takes ALL existing nodes (before looking at all their UVis), and ALL incoming oies (ditto), and look for any uvi matches.
 #Incoming oies are in a dict with key = verb span, value = ?
@@ -274,7 +257,7 @@ def uviMatch(existing, incoming, incomingUviMap):
             for jmm in jm:
                 try:
                     wnj = wn.synset(jmm)
-                except:
+                except WordNetError:
                     continue
                 for i in existing:
                     im = pb2wn.get(i.uvi,None)
@@ -282,7 +265,7 @@ def uviMatch(existing, incoming, incomingUviMap):
                         for imm in im:
                             try:
                                 wni = wn.synset(imm)
-                            except:
+                            except WordNetError:
                                 continue
                             sim = (wn.path_similarity(wni,wnj))
                             #print(wni,wnj,sim)
