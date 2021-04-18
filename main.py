@@ -1,126 +1,142 @@
 import pandas as pd
 from os import path
 import evidence
-from nlpPipeline import batchProc
-from claim import docClaim
-from webcrawl import nlpFeed
 
-#Politihop-to-standard label conversion, as in Politihop.
-politiDict = {'true':1,'mostly-true':1,'barely-true':-1,'half-true':0,'mostly-false':-1,'pants-fire':-1,'false':-1}
-truthDict = {}
+from nlpPipeline import batch_proc
+from claim import DocClaim
+from webcrawl import nlp_feed
 
-#Handles input for politihop
-def politihopInput(data):
+# Politihop-to-standard label conversion, as in Politihop.
+politiDict = {'true': 1, 'mostly-true': 1, 'barely-true': -1, 'half-true': 0, 'mostly-false': -1, 'pants-fire': -1,
+              'false': -1}
 
-    #Read in input claims
-    df=pd.read_table(path.join("data","Politihop",data),sep='\t').head(200)
 
-    #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
-    #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
-    statementSet = set()
+# Handles input for politihop
+def politihop_input(data):
+    # Read in input claims
+    df = pd.read_table(path.join("data", "Politihop", data), sep='\t')
+
+    # The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
+    # is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
+    statement_set = set()
+    truth_dict = {}
     for i, row in df.iterrows():
-        s=row['statement']
-        t=row['politifact_label']
-        while not s[0].isalpha() or s[0] == " ":
-            s=s[1:]
+        statement = row['statement']
+        truth = row['politifact_label']
+        while not statement[0].isalpha() or statement[0] == " ":
+            statement = statement[1:]
 
-        #Push in name of author to claim where a real person i.e. not a viral image/post
-        if s.partition(" ")[0].lower() == "says":
+        # Push in name of author to claim where a real person i.e. not a viral image/post
+        if statement.partition(" ")[0].lower() == "says":
             author = row['author'].replace("Speaker: ", "")
             if True or author in ['Facebook posts', 'Viral image']:
-                s = s.partition(" ")[2]
+                statement = statement.partition(" ")[2]
             else:
-                s= author +" s" + s[1:]
+                statement = author + " s" + statement[1:]
 
-        if True or politiDict[t] == 1:
-            statementSet.add(s)
-        truthDict[s] = politiDict[t]
-    #print("TD:",truthDict)
-    return statementSet, truthDict
+        statement_set.add(statement)
+        truth_dict[statement] = politiDict[truth]
+    return statement_set, truth_dict
 
 
-def liarInput(data):
-    #Read in input claims
-    df=pd.read_table(path.join("data","liarliar",data),sep='\t').head(200)
+def liar_input(data):
+    # Read in input claims
+    df = pd.read_table(path.join("data", "liarliar", data), sep='\t').head(200)
 
-    #The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
-    #is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
-    statementSet = set()
+    # The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
+    # is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
+    statement_set = set()
+    truth_dict = {}
     for i, row in df.iterrows():
-        s=row[2]
-        t=row[1]
-        while not s[0].isalpha() or s[0] == " ":
-            s=s[1:]
-        if s.partition(" ")[0].lower() == "says":
-                s = s.partition(" ")[2]
-        statementSet.add(s)
-        truthDict[s] = politiDict[t]
+        statement = row[2]
+        truth = row[1]
+        while not statement[0].isalpha() or statement[0] == " ":
+            statement = statement[1:]
+        if statement.partition(" ")[0].lower() == "says":
+            statement = statement.partition(" ")[2]
+        statement_set.add(statement)
+        truth_dict[statement] = politiDict[truth]
 
-    return statementSet, truthDict
+    return statement_set, truth_dict
 
-#Change which dataset to import
-DATA_IMPORT = {'politihop':politihopInput, 'liarliar':liarInput}
 
-def processClaim(doc, limiter):
+# Change which dataset to import
+DATA_IMPORT = {'politihop': politihop_input, 'liarliar': liar_input}
+
+
+# Run inference on a single claim
+def process_claim(doc, truth_dict, limiter):
+    # Setup evidence store & Per subclaim results
+    claim_ev = []
     print("CLAIM: ", doc)
-    scLevelResults = []
+    sc_level_results = []
 
-    #Split claim into subclaim and then logical formulae
-    tlClaim = docClaim(doc)
+    # Split claim into subclaim and then logical formulae
+    top_level_claim = DocClaim(doc)
 
-    #Iterate through generated subclaims and attempt to prove.
-    for subclaim in tlClaim.subclaims:
+    # Iterate through generated subclaims and attempt to prove.
+    for subclaim in top_level_claim.subclaims:
 
-        #Obtain search terms from processed subclaims
-        queries, ncs, entities = subclaim.kb.prepSearch()
+        # Obtain search terms from processed subclaims
+        query, noun_ch, entities = subclaim.kb.prepSearch()
 
-        #Collect evidence from webcrawler, modified by limiter as appropriate.
+        # Collect evidence from webcrawler, modified by evidence domain limiter as appropriate.
         sources = []
-        if limiter is not None and limiter == 'pfOnly':
-            sources.extend(nlpFeed(tlClaim.doc.text))
-        else:
-            for q in queries:
-                sources.extend(nlpFeed(q))
+        if (limiter is not None and limiter == 'pfOnly') or not query:
+            sources.extend(nlp_feed(top_level_claim.doc.text))
+        elif query:
+            sources.extend(nlp_feed(query))
 
-        #Process collected evidence into knowledge base.
-        evidence.processEvidence(subclaim, ncs, entities, sources)
 
-        #Attempt proof
-        result = subclaim.kb.prove()
-        print("RESULTAT", subclaim.doc, result)
+        # Process collected evidence into knowledge base.
+        evidence.processEvidence(subclaim, noun_ch, entities, sources)
 
-        #Write result back, 1 if true, -1 if false/no proof found*, or error symbol '5'.
+        # Attempt proof
+        result, sub_claim_evidence = subclaim.kb.prove()
+        claim_ev.append(sub_claim_evidence)
+
+        # Write result back, 1 if true, -1 if false/no proof found*, or error symbol '5'.
         if result is not None:
-            scLevelResults.append(1 if result else -1)
+            sc_level_results.append(1 if result else -1)
         else:
-            scLevelResults.append(5)
+            sc_level_results.append(5)
 
-    #Determine overall document result from subclaim results.
-    if scLevelResults:
-        print("sc", scLevelResults)
-        proportion = max(scLevelResults)
-        print("Guessed Truth:", str(proportion), "  Ground Truth:", truthDict[doc.text])
-        return ((proportion, truthDict[doc.text]))
+    # Determine overall document result from subclaim results.
+    if sc_level_results:
+        print("Subclaim Results: ", sc_level_results)
+        proportion = max(sc_level_results)
+        print("Guessed Truth:", str(proportion), "  Ground Truth:", truth_dict[doc.text])
+        return [proportion, truth_dict[doc.text], claim_ev]
     else:
-        return ((5, truthDict[doc.text]))
+        return [5, truth_dict[doc.text], []]
 
 
-
-
-def main(name='politihop',data='Politihop_train.tsv',limiter=None):
+def main(name='politihop', data='Politihop_test.tsv', limiter=None):
     results = []
-    #Read in statements & associated Ground truth
-    statementSet, truthDict = DATA_IMPORT[name](data)
+    # Read in statements & associated Ground truth
+    statement_set, truth_dict = DATA_IMPORT[name](data)
+    length = len(statement_set)
 
-    #Batch-process spaCy on documents
-    docs = batchProc(statementSet)
+    # Batch-process spaCy on documents
+    docs = batch_proc(statement_set)
 
-    #Convert doc to claim, run inference, append results to list
-    for doc in docs:
-        results.append(processClaim(doc, limiter))
+    # Convert doc to claim, run inference, append results to list
+    for index, doc in enumerate(docs):
+        print("Processing Doc: ", index+1, " of ", length)
+        res = process_claim(doc, truth_dict, limiter)
+        print(res)
+        results.append([doc, res[0], res[1], res[2]])
 
-    #Return final results
+    # Return final results
     print(results)
+    import csv
+    # opening the csv file in 'w+' mode
+    file = open('output.csv', 'w+', newline='')
+
+    # writing the data into the file
+    with file:
+        write = csv.writer(file)
+        write.writerows(results)
 
 
 if __name__ == '__main__':

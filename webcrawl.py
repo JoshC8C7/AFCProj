@@ -1,135 +1,169 @@
 import requests
 from newspaper import Article, Config, ArticleException
 from newspaper.utils import BeautifulSoup
+
 import pickle
 import os
-import time
-from spacy.pipeline import Sentencizer
+
+# Tokens and user-agent string are stored in tokens.py (omitted from Git for security).
 import tokens
 
 BING_FREE_KEY = tokens.BING_FREE_KEY
 BING_S1_KEY = tokens.BING_S1_KEY
-
-CACHE_FILE='data/SearchCache.pickle'
-#CACHE_FILE='data/liarCache.pickle'
-#CACHE_FILE='data/pfCache.pickle'
-SELECTED_SEARCH='bingFree'
-sentencizer = Sentencizer()
-
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, 'rb') as cache:
-        web_cache = pickle.load(cache)
-        print("Web Cache loaded")
-
-def politifactOnly(tlClaimtext):
-    time.sleep(1)
-    url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={tlClaimtext}&customconfig=506c5964-cf72-4d1e-a06d-655cc3d3989e&mkt=en-GB&count=1"
-    data = requests.get(url, headers={"Ocp-Apim-Subscription-key": BING_FREE_KEY})
-    vals = data.json().get('webPages',{}).get('value',{})
-    if not vals:
-        return []
-    else:
-        return list(i['url'] for i in vals)
+AGENT = tokens.AGENT
 
 
-def bingFree(term):
-    return bingParse(term, BING_FREE_KEY)
-
-def bingS1(term):
-    return bingParse(term, BING_S1_KEY)
-
-def bingParse(term, key):
-    time.sleep(1)
-    url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={term}&customconfig=c43aa9a7-40ee-4261-8ead-124b5a0ddcbc&mkt=en-GB"
-    data = requests.get(url, headers={"Ocp-Apim-Subscription-key": key})
-    vals = data.json().get('webPages',{}).get('value',{})
-    if not vals:
-        return []
-    else:
-        return list(i['url'] for i in vals)
-
-search_opts = {'bingFree':bingFree,'bingS1':bingS1, 'pfOnly':politifactOnly}
+# Import cache file containing searches and documents, specify which search engine/config to use.
+CACHE_FILE = 'data/SearchCache19.pickle'
+SELECTED_SEARCH = tokens.SEARCH
+EVIDENCE_BATCH_SIZE = 5
+FULL_OPEN_SEARCH_CONFIG = 'c43aa9a7-40ee-4261-8ead-124b5a0ddcbc&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE)
+OPEN_SEARCH_CONFIG = '4f2142cb-2875-478f-b6a1-da7beabdec7b&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE) #AFC-Limited @ Bing
+CLOSED_SEARCH_CONFIG = '506c5964-cf72-4d1e-a06d-655cc3d3989e&mkt=en-GB&count=1'
 
 
-def searchFetch(term):
+if not os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE, 'wb') as cache:
+        pickle.dump({}, cache)
+with open(CACHE_FILE, 'rb') as cache:
+    web_cache = pickle.load(cache)
+    print("Web Cache loaded")
+
+
+# Define various Search functions:
+
+# Fetch data from search limited to the first politifact result (for closed-domain evaluation). There was initially
+# more pre-processing done before passing to searchParse; these functions remain for extensibility (e.g. with google).
+def politifact_only(tl_claimtext):
+    return search_parse(tl_claimtext, BING_S1_KEY, CLOSED_SEARCH_CONFIG)
+
+
+def bing_free(term):
+    return search_parse(term, BING_S1_KEY, OPEN_SEARCH_CONFIG)
+
+
+def bing_s1(term):
+    return search_parse(term, BING_S1_KEY, OPEN_SEARCH_CONFIG)
+
+
+# Parses from Bing searchs.
+def search_parse(term, key, config):
+    tk=term.replace(" ","%20")
+    url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={tk}&customconfig={config}"
+    print(url)
+    data_in = requests.get(url, headers={"Ocp-Apim-Subscription-key": key})
+    print(data_in.json())
+    vals = data_in.json().get('webPages', {}).get('value', {})
+    return [] if not vals else list(i['url'] for i in vals)
+
+
+# Dictionary of available search options.
+search_opts = {'bingFree': bing_free, 'bingS1': bing_s1, 'pfOnly': politifact_only}
+
+
+# Trigger a search, first checking if the term has been sought from the cache.
+def search_fetch(term):
     if term in web_cache:
         print("Cache Hit: ", term)
         return web_cache[term]
     else:
         print("Cache miss ", term)
-        searchFunct = search_opts[SELECTED_SEARCH]
-        res = searchFunct(term)
-        print("Writing to cache -",res,"-")
+        search_funct = search_opts[SELECTED_SEARCH]
+        res = search_funct(term)
+        print("Writing to cache -", res, "-")
         web_cache[term] = res
         return res
 
 
-def nlpFeed(t):
-    freshCache = True
+# Takes a term and returns parsed article text
+def nlp_feed(term):
+    fresh_cache = True
     sources = set()
     config = Config()
-    config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36'
-    urls = searchFetch(t)
-    for url in urls[:5]:
+    config.browser_user_agent = AGENT
+    urls = search_fetch(term)
+    for url in urls[:1+EVIDENCE_BATCH_SIZE]:
+
+        # Exclude any links (usually Associated Press ones) which are themselves fact-checks, which would be cheating...
         if 'factcheck' in url or 'fact-check' in url:
             continue
+
+        # Scrape requested URLs if they aren't currently in cache.
         if url in web_cache:
             wc = web_cache[url]
             if wc != '':
                 sources.add((url, wc))
-                print("Cache Hit on ", url[:max(len(url),50)],"......")
+                print("Cache Hit on ", url[:max(len(url), 50)], "......")
         else:
-            #print("////////////// "+url + " ///////////")
             try:
-                if ('www.bbc' in url):
+                # newspapers can't handle bbc ergo custom approach
+                if 'www.bbc' in url:
                     article = requests.get(url)
                     if article.status_code != 200:
                         raise ArticleException
                     soup = BeautifulSoup(article.content, 'html.parser')
-                    body = ' '.join(x.text for x in soup.findAll('p'))
+                    body = ' '.join(z.text for z in soup.findAll('p'))
                     sources.add((url, body))
                     if body not in web_cache:
                         web_cache[url] = body
-                        freshCache = False
+                        fresh_cache = False
 
                 else:
-                    article = Article(url,config=config, language='en')
+                    article = Article(url, config=config, language='en')
                     article.download()
                     article.parse()
-                    sources.add((url,article.text))
-                    #print(article.text)
+                    sources.add((url, article.text))
                     if article.text not in web_cache:
                         web_cache[url] = article.text
-                        freshCache = False
+                        fresh_cache = False
 
             except ArticleException:
                 print("Couldn't fetch: ", url)
                 web_cache[url] = ''
-                freshCache = False
-    if not freshCache: dumpToDisk()
+                fresh_cache = False
+
+    # Only dump to disk if cache has been modified
+    if not fresh_cache:
+        dump_to_disk()
     return sources
 
-def dumpToDisk():
-    with open(CACHE_FILE, 'wb') as cache:
-        pickle.dump(web_cache,cache)
 
+# Dumps cache to disk. Note that dumping the cache does not entail reloading it, however assuming one user at a time
+# them ephemeral cache will always be up to date with disk cache, once written here.
+def dump_to_disk():
+    with open(CACHE_FILE, 'wb') as cache_file:
+        pickle.dump(web_cache, cache_file)
+
+
+# Utility code for managing cache.
 if __name__ == "__main__":
-    resp = input("Cache management. Enter 'clear' to clear URL cache, 'inspect' to view it, 'create' to re-form the trusted source list, or 'exit'.")
+    resp = input(
+        "Cache management. Enter 'clear' to clear URL cache, 'inspect' to view it, "
+        "'create' to re-form the trusted source list, or 'exit'.")
     if resp == 'inspect':
         with open(CACHE_FILE, 'rb') as cache:
-            print(pickle.load(cache))
+            kd = (pickle.load(cache))
+            print(kd.keys())
     elif resp == 'clear':
         with open(CACHE_FILE, 'wb') as cache:
-            pickle.dump({},cache)
+            pickle.dump({}, cache)
         print("Cache cleared")
+    elif resp == 'partial':
+        k = input("name: ")
+        with open(CACHE_FILE, 'rb') as cache:
+            kd = (pickle.load(cache))
+            kd.pop(k)
+        with open(CACHE_FILE, 'wb') as cache:
+            pickle.dump(kd, cache)
     elif resp == 'create':
         import json
         import csv
-        safe =[]
+
+        safe = []
         with open('data/sources/csources.json') as json_file:
             data = json.load(json_file)
             for pk, pv in data.items():
-                if pv.get('r',"") in ("VH","H","MF"):
+                if pv.get('r', "") in ("VH", "H", "MF"):
                     print(pk, pv['r'])
                     safe.append([pk])
 
@@ -138,7 +172,7 @@ if __name__ == "__main__":
             inList = list(reader)[1:]
         print(inList)
         for y in inList:
-            x=y[0]
+            x = y[0]
             if x[-1] == '/':
                 print(x[:-1])
                 safe.append([x[:-1]])
@@ -147,6 +181,6 @@ if __name__ == "__main__":
                 safe.append([x])
 
         print(safe)
-        with open('data/sources/trusted.csv','w+',newline='') as f:
+        with open('data/sources/trusted.csv', 'w+', newline='') as f:
             writer = csv.writer(f)
             writer.writerows(safe)

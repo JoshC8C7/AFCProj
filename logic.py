@@ -1,7 +1,10 @@
+from string import punctuation
+from collections import deque
+
+from spacy.tokens.token import Token
 from nltk.sem import Expression as expr
 from nltk.inference.resolution import *
-from string import punctuation
-from spacy.tokens.token import Token
+
 import claim
 
 def getSpanCoref(span):
@@ -12,44 +15,45 @@ def getSpanCoref(span):
                 corefSet.add(cf)
     return list(corefSet)
 
-class KnowledgeBase():
+class KnowledgeBaseHolder():
 
-    prover = None
+    #Define core arguments, and those to exclude (Right-args)
     core = ['ARG0', 'ARG1', 'ARG2', 'ARG3', 'ARG4', 'ARG5']
-    other = ['SKIP', 'AND','IF','OR','RxARG0','RxARG1']
+    other = ['SKIP', 'RxARG0','RxARG1']
     c = expr.fromstring('argF(root)')
-    notC=expr.fromstring('-argF(root)')
 
     def __init__(self, claimIn, roots,tlClaim):
         self.claimG = claimIn
         self.roots = roots
-        self.argBaseC = tlClaim.argBaseC
-        self.kb = []
-        self.freeVariableCounter = 0
-        self.searchTerms=[]
+        self.argBaseC = tlClaim.argBaseC # argBaseC stores association between span and ID
+        self.kb = [] #kb is the list of expressions on which inference is run
+        self.freeVariableCounter = 0 #A counter to ensure free variables are unique.
+        self.searchTerms=[]  # List of potential search terms, updated as the knowledge base is populated
         self.argFunc = tlClaim.argID
-        self.kb2 = []
-        self.kb2_args = {}
-        self.ruleLength = 0
-        self.evidenceMap = {}
-        self.graph2rules()
+        self.kb_rules_only = [] #A subset of the knowledge base containing ONLY rules.
+        self.kb_rules_only_to_args = {} #A map between the rules in kb_rules_only and their associated args
+        self.ruleLength = 0 #Number of rules in the KB - so evidence backtracking knows how far to go.
+        self.evidenceMap = {} #Associates evidence with Span (as they bypass argbaseC)
+        self.graph2rules() #Populate the above on init
 
 
+    #Get dict of args filtered to include only those which were eventually added to the kb.
     def getEnabledArgBaseC(self):
-        filtered = {}
-        for ik,iv in self.argBaseC.items():
-            if iv.enabled:
-                filtered[ik] = iv
-        return filtered
+        return {k: v for k, v in self.argBaseC.items() if v.enabled}
 
+    #Convert accrued searchTerms into a formed query to send to webCrawler
     def prepSearch(self):
         queries=[]
         entities=[]
         ncs=[]
-        newNCs=set()
+
+        #If no searchTerms have been accrued then just add the entire claim as one first
         if not self.searchTerms:
             for root in self.roots:
                 self.searchTerms.append((root,list(x[0] for x in self.claimG.in_edges(nbunch=root))))
+
+        #For every term, substitute in coreference canonical references. Populate entities + noun_chunk lists for use
+        #in post-collection document culling.
         for term in self.searchTerms:
             spanList= sorted(list(self.argBaseC[arg].span for arg in term[1] + [term[0]]),key=lambda x: x.start)
             corefSubbedSpans = []
@@ -59,6 +63,7 @@ class KnowledgeBase():
                 usedCorefs = []
                 newSpan = []
                 for tok in span:
+                    #Don't subtitute any coreferences in which are just pronouns - will never be gaining information.
                     if tok._.in_coref and tok.tag_ in ('PRP', 'PRP$'):
                         coref = tok._.coref_clusters[0]
                         if coref not in usedCorefs:
@@ -72,38 +77,19 @@ class KnowledgeBase():
                 corefSubbedSpans.append(''.join((tok.text_with_ws if type(tok) == Token else tok) for tok in newSpan))
             queries.append(' '.join(corefSubbedSpans).replace('  ',' ').replace(" 's","'s"))
 
-            for val in ncs+entities:
-                newNc=[]
-                for tok in val:
-                    if tok.tag_ not in claim.grammaticalTAG + ['PRP','PRP$']:
-                        newNc.append(tok)
-                    #else:
-                        #print("Dropping:",tok)
-                if newNc:
-                    appText = ''.join(tok.text_with_ws for tok in newNc)
-                    if appText[-1] == " ":
-                        appText=appText[:-1]
-                    newNCs.add(appText)
-
-        #print("ST: ", self.searchTerms, " QU:", queries)y
-
-        #todo this is a short hack to remove searchterms that are within another one, as to reduce the horrific runtimes.
-        q2=queries.copy()
-        for i in queries:
-            for j in queries:
-                if i in j and i != j and i in q2:
-                    print("rem",i," in ",j)
-                    q2.remove(i)
-        print("Queries",newNCs)
+        #Remove any queries which are
+        if queries:
+            q2 = sorted(queries)[0]
+        else:
+            q2 = None
         return q2, ncs, entities
-        #return [','.join(sorted(newNCs))] + q2, ncs, entities
 
 
     #Determines whether edge leads to a 'core' argument (i.e. a named one, and/or one that is not a leaf), or if
     #leads to a modifier (ARGM-) or a leaf argument ('other').
     def modOrCore(self,edge):
         if len(list(x for x in self.claimG.in_edges(nbunch=edge[0],data=True) if x[2].get('style','') != 'dotted')) and 'ARGM' not in edge[2].get('label',''):
-            return 'coreInternal'
+            return 'coreInterior'
         if edge[2].get('label','') in self.core:
             return 'core'
         if edge[2].get('label','SKIP') not in self.core + self.other:
@@ -122,9 +108,13 @@ class KnowledgeBase():
         return retVal
 
     def addToKb(self,text):
-        print("adding to kb ", text)
-        self.kb.append(expr.fromstring(text))
-        return
+        if text[:4] == ' -> ':
+            print("No predicate found, KB adding aborted")
+            return
+        else:
+            print("Adding to KB ", text)
+            self.kb.append(expr.fromstring(text))
+            return
 
 
     def graph2rules(self):
@@ -151,12 +141,13 @@ class KnowledgeBase():
         filteredRoots=(y for y in rootsIn if len(self.claimG.in_edges(nbunch=y)) > 0)
         k=list(filteredRoots)
         inc = list((self.establishRule(x,seen) for x in k))
-        self.kb2.extend(inc)
-        return " & ".join(inc)
+        inc2 = list(x for x in inc if '()' not in x)
+        self.kb_rules_only.extend(inc2)
+        return " & ".join(inc2)
 
     #Take a node and establish it as a predicate function, with its arguments being the verb (node)'s arguments.
     def establishRule(self,root,seen):
-        self.argBaseC[root].enableNode()
+        self.argBaseC[root].enable_node()
         seen.add(root)
         predNeg = False
         argList = []
@@ -165,10 +156,9 @@ class KnowledgeBase():
         incomingEdges = sorted(self.claimG.in_edges(nbunch=root, data=True), key=lambda x: x[2].get("label","Z")) #Sort to ensure Arg0 is processed first.
         for edge in incomingEdges:
             #Find the core args to create the predicate. Modifiers are not permitted in the predicate at this point.
-            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInternal','core']:
+            if edge[2].get('style','') != 'dotted' and self.modOrCore(edge) in ['coreInterior','core']:
                 argList.append(edge[0])
 
-        #if all(self.modOrCore(edge) != 'coreInternal' for edge in incomingEdges) and len(argList) > 1:
         if len(argList) > 1:
             self.searchTerms.append((root,argList))
 
@@ -178,7 +168,7 @@ class KnowledgeBase():
             if edge[2].get('style','') == 'dotted':
                 continue
 
-            # Is argx an internal node (i.e. has incoming violet/verb-subpart edges:) - NOT modifiers (although they can have incoming violet edges, this is handled later)
+            # Is argx an interior node (i.e. has incoming violet/verb-subpart edges:) - NOT modifiers (although they can have incoming violet edges, this is handled later)
             #If so, need to handle the subtree rooted at it (i.e. recurse deeper)
             if len(self.claimG.in_edges(nbunch=edge[0])) > 0 and 'ARGM' not in edge[2].get('label','') and edge[0] not in seen: #Looking at an arg, we're just checking if it has at least 1 violet edge in. Modifiers are not args.
                 upVal = self.conjEstablish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))),seen) #Conjestablish over all incoming violet edges (although usually is just 1)
@@ -192,7 +182,7 @@ class KnowledgeBase():
                     else:
                         miniArgList.append(freeVar + str(i))
                 impliedArg = (root)+str(len(miniArgList)) + '(' + ",".join(miniArgList)+")"
-                self.kb2.append(impliedArg)
+                self.kb_rules_only.append(impliedArg)
                 if upVal:
                     self.addToKb(upVal + ' -> ' + impliedArg)
 
@@ -211,7 +201,7 @@ class KnowledgeBase():
                         predNeg = True
                     else:
                         modifiers.append((modType, modValID))
-                        self.argBaseC[modValID].enableNode()
+                        self.argBaseC[modValID].enable_node()
                 elif modType in ['DIR', 'PRD','MNR']:
                     if not(modType == 'MNR' and all(tok.tag_ not in claim.grammaticalTAG for tok in modVal)):
                         argList.append(modValID)
@@ -237,7 +227,7 @@ class KnowledgeBase():
         predicate = root + str(len(argList)) + '(' + ','.join(argList) + ')'
 
         for arg in argList:
-            self.argBaseC[arg].enableNode()
+            self.argBaseC[arg].enable_node()
 
         if predNeg:
             print("predneg")
@@ -245,20 +235,27 @@ class KnowledgeBase():
 
         #Add the predicates
         oldPred = predicate
-        self.kb2_args[oldPred] = []
+        self.kb_rules_only_to_args[oldPred] = []
         for m in modifiers:
             modifierText = m[0]+oldPred.translate(str.maketrans('', '', punctuation)) + '(' + m[1] + ')'
-            self.kb2_args[oldPred].append(modifierText)
+            self.kb_rules_only_to_args[oldPred].append(modifierText)
             predicate += " & " + modifierText
 
         return predicate
 
 
+    #Run inference with current KB population.
     def prove(self):
-        print("proving....")
+        if len(self.kb) == self.ruleLength:
+            return False, []
+        evidence = []
+        print("Attempting proof...")
+
+        #Set up NLTK resolution-based prover.
         rpc = ResolutionProverCommand(goal=self.c,assumptions=self.kb)
         p1 = rpc.prove(verbose=True)
         if p1:
+            #Parse unhelpful text output format
             prf = rpc.proof().replace(" ", "").split("\n")
             prfParsed = []
             for x in prf:
@@ -267,7 +264,7 @@ class KnowledgeBase():
                         y = x.split('}')[1].replace('(','').replace(')','').split(',')
                         prfParsed.append((int(y[0]),int(y[1])))
                     except:
-                        continue #in the rare case that argF{} is read as an input.
+                        continue #in the rare case that argF{} is read as an input and overrides.
                 elif x:
                     y=x.split('{')[1].split('}')
                     if y[1] == 'A':
@@ -276,16 +273,21 @@ class KnowledgeBase():
                         ysplit = y[1].replace(')','').replace('(','').split(',')
                         prfParsed.append((int(ysplit[0]),int(ysplit[1])))
 
+            #Obtain proof from backtracker
             path = backtracker(prfParsed,self.ruleLength)
+
+            #Write proof derivation
             for index, i in enumerate(path):
                 if index > 0 and index < len(path) - 1: print("-->--",end="")
                 if type(i) is not tuple:
                     print(self.evidenceMap[i], " @ ", self.evidenceMap[i]._.url,end='')
+                    evidence.append(self.evidenceMap[i]._.url)
             print()
-        return p1
+        print("retev")
+        return p1, evidence
 
+#Backtrack through derivation to extract the proof, using ruleLength to determine when 'leaves' are reached.
 def backtracker(prf, rl):
-    from collections import deque
     path=[]
     queue = deque(prf[-1])
     while len(queue):
@@ -293,10 +295,8 @@ def backtracker(prf, rl):
         step = prf[k]
         if k <= rl:
             print("",end='')
-            #print("RULE",end='')
         else:
             path.append(step)
-        #print('STEP: ', step)
         if type(step) is tuple:
             queue.extend(step)
     path.reverse()
