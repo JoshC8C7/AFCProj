@@ -6,264 +6,286 @@ from word2number.w2n import word_to_num as w2n
 import re
 import claim
 import numpy as np
-
+import textdistance.algorithms as tda
 import json
 import nlpPipeline
 from spacy.lang.en import English, STOP_WORDS
 import requests
 
-
-#Setup wikidata API
-endpoint_url = "https://www.wikidata.org/w/api.php?action=wbsearchentities&search={0}&language=en&format=json&limit=3"
+# Setup wikidata API
+wd_endpoint = "https://www.wikidata.org/w/api.php?action=wbsearchentities&search={0}&language=en&format=json&limit=3"
 
 # Import spacy sentencizer only for pre-processing/lightweight culling of irrelevant documents.
-nlp = English()
-nlp.add_pipe(nlp.create_pipe("sentencizer"))
+nlp_sentencise_only = English()
+nlp_sentencise_only.add_pipe(nlp_sentencise_only.create_pipe("sentencizer"))
 
-#Read in PropBank to WordNet dictionary
+# Read in PropBank to WordNet dictionary
 with open('data/pb2wn.json', 'r') as inFile:
-    pb2wn = json.load(inFile)
+    propbank_to_wordnet = json.load(inFile)
 
-#Compare two entities via wikidata query. Checks for any intersection between two sets of 3 entities (UIDs) returned
-#by a wikidata query, and caches them due to the high chance of a query being repeated.
-def wikidataCompare(e1, e2, cache):
-    #Only compare entities where at least one token is labelled as a (proper) noun.
-    if all(x.pos_ not in ('PROPN', 'NOUN') for x in e1) or all(
-            y.pos_ not in ('PROPN', 'NOUN') for y in e2) or e1.label_ != e2.label_:
+
+# Compare two entities via wikidata query. Checks for any intersection between two sets of 3 entities (UIDs) returned
+# by a wikidata query, and caches them due to the high chance of a query being repeated.
+def wikidata_compare(node1, node2, cache):
+    # Only compare entities where at least one token is labelled as a (proper) noun.
+    if all(x.pos_ not in ('PROPN', 'NOUN') for x in node1) or all(
+            y.pos_ not in ('PROPN', 'NOUN') for y in node2) or (
+            node1.label_ and node2.label_ and node1.label_ != node2.label_):
         return False
 
-    #If searching on noun chunks instead, just look at their root (which will be the noun).
-    if e1.label_ is None:
-        e1 = e1.root
-        e2 = e2.root
+    # If searching on noun chunks instead, just look at their root (which will be the noun).
+    if node1.label_ is None:
+        node1 = node1.root
+        node2 = node2.root
 
-    #Implement caching, make request to wikidata.
-    if e1.text in cache and cache[e1.text] is not None:
-        k1 = cache[e1.text]
+    # Fetch from wikidata
+    id1 = wiki_fetch(node1, cache)
+    id2 = wiki_fetch(node2, cache)
+
+    # Return if any common entity
+    return any(x in id2 for x in id1)
+
+
+# Interface with cache and/or fetch from wikidata
+def wiki_fetch(node, cache):
+    if node.text in cache and cache[node.text] is not None:
+        id_list = cache[node.text]
     else:
-        k1 = requests.get(endpoint_url.format(e1.text.replace(" ", "%20"))).json().get('search', [])
-        if k1 is None:
-            cache[e1.text] = None
-            return False
-        else:
-            cache[e1.text] = k1
-
-    #Repeat for 2nd entity
-    if e2.text in cache and cache[e2.text] is not None:
-        k2 = cache[e2.text]
-    else:
-        k2 = requests.get(endpoint_url.format(e2.text.replace(" ", "%20"))).json().get('search', [])
-        if k2 is None:
-            cache[e2.text] = None
-            return False
-        else:
-            cache[e2.text] = k2
-
-    #Return if any common entity
-    return any(x['id'] in k2 for x in k1)
-
-#Compare two entities which are numbers
-def numCompare(e1, e2):
-
-    if e1.label_ == e2.label_ == 'CARDINAL':
-        re1 = re.findall(r'[\d.]+', e1.text)
-        re2 = re.findall(r'[\d.]+', e2.text)
-
-        #Attempt text to digit conversion (one million -> 1,000,000)
+        wiki_data = requests.get(wd_endpoint.format(node.text.replace(" ", "%20")))
         try:
-            int1 = float(w2n(e1.text)) * (1.0 if not re1 else float(re1[0]))
+            wiki_data_parsed = wiki_data.json().get('search', [])
+        except json.decoder.JSONDecodeError:
+            return []
+        else:
+            id_list = list(x.get('id', '') for x in wiki_data_parsed)
+            cache[node.text] = id_list
+    return id_list
+
+
+# Compare two entities which are numbers
+def num_compare(node1, node2):
+    if node1.label_ == node2.label_ == 'CARDINAL':
+        numerical_node1 = re.findall(r'[\d.]+', node1.text)
+        numerical_node2 = re.findall(r'[\d.]+', node2.text)
+
+        # Attempt text to digit conversion (one million -> 1,000,000)
+        try:
+            node1_val = float(w2n(node1.text)) * (1.0 if not numerical_node1 else float(numerical_node1[0]))
         except ValueError:
-            if re1:
-                int1 = float(re1[0])
+            if numerical_node1:
+                node1_val = float(numerical_node1[0])
             else:
                 return True
         try:
-            int2 = float(w2n(e2.text)) * (1.0 if not re2 else float(re2[0]))
+            node2_val = float(w2n(node2.text)) * (1.0 if not numerical_node2 else float(numerical_node2[0]))
         except ValueError:
-            if re2:
-                int2 = float(re2[0])
+            if numerical_node2:
+                node2_val = float(numerical_node2[0])
             else:
                 return True
 
-        #Accept comparison if within 30% either way.
-        return int2 * 0.7 < int1 < int2 * 1.3
+        # Accept comparison if within 30% either way.
+        return node2_val * 0.7 < node1_val < node2_val * 1.3
     else:
         return True
 
-#Process incoming evidence into the knowledge base, if relevant. Attempts to co-resolve with entities
-#already in the knowledge base, where possible.
-def processEvidence(subclaim, ncs, entities, sources):
-    wikiCache = {}
 
-    #Strip existing to compare with incoming - i.e. don't accept a direct copy of the claim being checked, as evidence.
-    strippedExisting = subclaim.doc.text.translate(str.maketrans('', '', punctuation)).lower()
+# Process incoming evidence into the knowledge base, if relevant. Attempts to co-resolve with entities
+# already in the knowledge base, where possible.
+def process_evidence(subclaim, ncs, entities, sources):
+    # Cache queries sent to wikidata as is good practice.
+    wiki_cache = {}
 
-    #Pre-process evidence
-    evidence = receiveDoc(sources, subclaim.doc)
-    urlMap = dict((x[1], x[0]) for x in evidence)
+    # Strip existing to compare with incoming - i.e. don't accept a direct copy of the claim being checked, as evidence.
+    stripped_existing = subclaim.doc.text.translate(str.maketrans('', '', punctuation)).lower()
 
-    #Batch run evidence through NLP pipeline
-    evDocs = nlpPipeline.batch_proc(list(x[1] for x in evidence), urlMap, (ncs, entities))
+    # Pre-process evidence
+    evidence = receive_doc(sources, subclaim.doc)
+    url_map = dict((x[1], x[0]) for x in evidence)
 
-    soughtV = set()
-    kbElligibleOIEs = []
+    # Batch run evidence through NLP pipeline
+    ev_docs = nlpPipeline.batch_proc(list(x[1] for x in evidence), url_map, (ncs, entities))
 
-    #Obtain list of verbs to co-resolve with
+    sought_v = set()
+    verb_matched_relations = []
+
+    # Obtain list of verbs to co-resolve with
     for x in subclaim.kb.argBaseC.values():
         if x.uvi is not None:
-            soughtV.add(x)
+            sought_v.add(x)
 
-    for doc in evDocs:
-        strippedIncoming = doc.text.translate(str.maketrans('', '', punctuation)).lower()
-        if (strippedExisting == strippedIncoming):
+    for doc in ev_docs:
+        if stripped_existing == doc.text.translate(str.maketrans('', '', punctuation)).lower():
             continue
 
-        #Extract verb frames to be passed to verb sense comparison function
-        oieAccum = {}
-        uviMatchedOies = {}
-        for oie in doc._.OIEs:
-            oieAccum[oie['V']] = oie
+        # Extract verb frames to be passed to verb sense comparison function
+        srl_accum = {}
+        uvi_matched_srls = {}
+        for srl in doc._.OIEs:
+            srl_accum[srl['V']] = srl
 
-        #Co-resolve two possible verbs, if possible.
-        if oieAccum:
-            proceeding = uviMatch(soughtV, oieAccum, doc._.Uvis)
-            if proceeding:
-                for p in proceeding:
-                    #Obtain rich arg node rather than just the ID, then form dictionary with key as the verb node, and
-                    #values as a list of incoming relations whose verb has co-resolved with the key verb node.
-                    verbNode = subclaim.kb.getEnabledArgBaseC().get(p[0], None)
-                    if verbNode is not None:
-                        if verbNode in uviMatchedOies:
-                            uviMatchedOies[verbNode].append(p[1])
+        # Co-resolve two possible verbs, if possible.
+        if srl_accum:
+            path_matches, sentiment_matches = verb_match(sought_v, srl_accum, doc._.Uvis)
+            if path_matches:
+                for p in path_matches:
+                    # Obtain rich arg node rather than just the ID, then form dictionary with key as the verb node, and
+                    # values as a list of incoming relations whose verb has co-resolved with the key verb node.
+                    rich_arg_node = subclaim.kb.get_enabled_arg_base_c().get(p[0], None)
+                    if rich_arg_node is not None:
+                        if rich_arg_node in uvi_matched_srls:
+                            uvi_matched_srls[rich_arg_node].append(p[1])
                         else:
-                            uviMatchedOies[verbNode] = [p[1]]
-            if uviMatchedOies:
-                #If any verb matches are found, attempt to resolve nouns.
-                nounMatch(uviMatchedOies, subclaim, doc, wikiCache)
+                            uvi_matched_srls[rich_arg_node] = [p[1]]
+            # If any verb matches are found, attempt to resolve nouns.
+            noun_match(uvi_matched_srls, subclaim, doc, wiki_cache, sentiment_matches)
 
-    return kbElligibleOIEs
+    return verb_matched_relations
 
-#Obtain coreferences for the input span
-def corefCollect(span):
+
+# Obtain coreferences for the input span
+def coref_collect(span):
     corefs = []
     for tok in span:
         corefs.extend((x.main for x in tok._.coref_clusters))
     return corefs
 
-#Compare two nouns on a mix of metrics.
-def nodeCompare(IargK, IargV, Espan, wikiCache):
-    sim = compute_similarity(IargV, Espan.span)
-    #Baseline embedding similarity required, and cannot include nodes with an argument type that's dotted (excluded)
-    if IargK != 'V' and sim > 0.5 and claim.get_edge_style(IargK, IargV) != 'dotted':
-        Icorefs, ECorefs = corefCollect(IargV), corefCollect(Espan.span)
 
-        #If No entities in either noun, then compare if embeddings are close (by cosine similarity).
-        if (not (IargV.ents or Espan.span.ents) and sim > 0.8):
+# Compare two nouns on a mix of metrics.
+def node_compare(inc_node_label, inc_node_span, exst_rich_arg, wiki_cache):
+    sim = compute_similarity(inc_node_span, exst_rich_arg.span)
+    # Baseline embedding similarity required, and cannot include nodes with an argument type that's dotted (excluded)
+    if inc_node_label != 'V' and claim.get_edge_style(inc_node_label, inc_node_span) != 'dotted':
+        icorefs, ecorefs = coref_collect(inc_node_span), coref_collect(exst_rich_arg.span)
+        # If No entities in either noun, then compare if embeddings are close (by cosine similarity).
+        if not (inc_node_span.ents or exst_rich_arg.span.ents) and sim > 0.8:
+            print(inc_node_span, "/ ", exst_rich_arg.span, "  l1")
+
             return True
         else:
-            #Check if more noun-chunks are alike than are dissimilar, based on levenshtein.
-            c1, c2 = 0, 0
-            v = ((similarity.levenshtein(x.root.text, y.root.text) > 0.7 and len(y.root.text) * 5 > len(
-                x.root.text) > len(y.root.text) // 5) for x in IargV.noun_chunks for y in
-                 Espan.span.noun_chunks)
+            # Check if more noun-chunks are alike than are dissimilar, based on levenshtein.
+            similar_count, dissimilar_count = 0, 0
+
+            v = ((((tda.gotoh.normalized_similarity(x.root.text,y.root.text) > 0.4) and (1 > 10 * tda.monge_elkan.normalized_similarity(
+                x.text, y.text) > 0.4) and compute_similarity(x,y) > 0.3) or similarity.token_sort_ratio(x.root.text, y.root.text) > 0.7) for x in
+                 inc_node_span.noun_chunks for y in
+                 exst_rich_arg.span.noun_chunks)
             for x in v:
                 if x:
-                    c1 += 1
+                    similar_count += 1
                 else:
-                    c2 += 1
-            if c1 > c2:
+                    dissimilar_count += 1
+
+            if similar_count > dissimilar_count:
                 return True
-            #If entities are present in both, require sane length and for numbers to be sufficiently similar (or the
+            # If entities are present in both, require sane length and for numbers to be sufficiently similar (or the
             # comparison return True as the entities passed are not elligible), and one of levenshtein or wikidata
             # coresolution to exhibit sufficient similarity.
-            elif IargV.ents and Espan.span.ents and len(IargV.ents) * 5 > len(
-                Espan.span.ents) > len(IargV.ents) // 5 and (any(numCompare(x, y) and (
-                    similarity.levenshtein(x.text, y.text) > 0.7 or wikidataCompare(x, y, wikiCache)) for x in
-                                                         IargV.ents + Icorefs for y in set(Espan.span.ents + ECorefs))):
+            cb1 = 0
+            cb2 = 0
+            z = (
+                num_compare(x, y) and similarity.levenshtein(x.text, y.text) > 0.7 or wikidata_compare(x, y,
+                                                                                                       wiki_cache)
+                for x in
+                inc_node_span.ents + icorefs for y in set(exst_rich_arg.span.ents + ecorefs))
+            for x in z:
+                if x:
+                    cb1 += 1
+                else:
+                    cb2 += 1
+
+            # print(inc_node_span, "/", exst_rich_arg.span, c1, "/", c2)
+            if cb1 > cb2:
                 return True
 
-    #If not matched on any criteria, then return False.
+    # If not matched on any criteria, then return False.
     return False
 
 
-def nounMatch(oiesDict, subclaim, docIn, wikiCache):
-    for kbEnt in subclaim.kb.kb_rules_only:  # Iterate over KB rules
-        kbEnt = kbEnt.replace('-', '')
-        splitvarg = kbEnt.split('(')
-        verbT, arity, args = splitvarg[0][:-1], splitvarg[0][-1:], splitvarg[1].split(')')[0].split(',')
-        verb = subclaim.kb.getEnabledArgBaseC().get(verbT, None)
-        for oiesEnt in oiesDict.get(verb, []):  # Iterate over incoming oies
-            predNeg = False
-            accum = [False] * int(arity)
-            oieIter = list(sorted(oiesEnt.items()))
-            for index, EargV in enumerate(args):
-                Espan = subclaim.kb.getEnabledArgBaseC().get(EargV, None)
+def noun_match(path_matches, subclaim, incoming_doc, wiki_cache, sentiment_matches):
+    for kb_function in subclaim.kb.kb_rules_only:  # Iterate over KB rules
+        kb_function = kb_function.replace('-', '')
+        kb_function_split = kb_function.split('(')
+        kb_predicate_id, function_arity, kb_function_args = kb_function_split[0][:-1], kb_function_split[0][-1:], \
+            kb_function_split[1].split(')')[0].split(',')
+        kb_predicate = subclaim.kb.get_enabled_arg_base_c().get(kb_predicate_id, None)
+        combined_matches = path_matches.get(kb_predicate, []) + sentiment_matches.get(kb_predicate_id, [])
+        for match in combined_matches:  # Iterate over incoming oies
+            negate_predicate = False
+            matched_nouns = [False] * int(function_arity)
+            sorted_match = list(sorted(match.items()))
+            for index, existing_arg in enumerate(kb_function_args):
+                existing_span = subclaim.kb.get_enabled_arg_base_c().get(existing_arg, None)
 
-                if Espan is None:
+                if existing_span is None:
                     continue
-                for IargK, IargV in oieIter:
-                    if nodeCompare(IargK, IargV, Espan, wikiCache):
-                        accum[index] = True
+                for inc_arg_label, inc_arg_value in sorted_match:
+                    if node_compare(inc_arg_label, inc_arg_value, existing_span, wiki_cache):
+                        # print(inc_node_span, "-> ", exst_rich_arg.span)
+                        matched_nouns[index] = True
+                    # else:
+                    # print(inc_node_span, "-X-> ", exst_rich_arg.span)
 
-            if sum(1 for i in accum if i) / int(arity) >= 0.66:
+            if sum(1 for i in matched_nouns if i) / int(function_arity) >= 0.66:
                 modifiers = []
-                if 'ARGM-NEG' in oiesEnt:
-                    predNeg = True
-                for mod in subclaim.kb.kb_rules_only_to_args.get(kbEnt.split(" ")[0],
-                                                        []):  # for this predicate, are there modifiers listed? iterate over them
-                    # note that some won't have assocaited modifier lists because they were internal nodes and so were added during establishrule,
-                    # rather than via conjestablish.
-                    enrichedModifierNode = subclaim.kb.getEnabledArgBaseC().get(mod.split('(')[1].replace(')', ''),
-                                                                       None)  # Are these modifiers enabled?
-                    if enrichedModifierNode is None:
+                if 'ARGM-NEG' in match:
+                    negate_predicate = True
+                for mod in subclaim.kb.kb_rules_only_to_args.get(kb_function.split(" ")[0],[]):
+                    # for this predicate, are there modifiers listed? iterate over them
+                    # note that some won't have assocaited modifier lists because they were internal nodes and so
+                    # were added during establishrule, rather than via conjestablish.
+                    modifier_node = subclaim.kb.get_enabled_arg_base_c().get(mod.split('(')[1].replace(')', ''),
+                                                                             None)  # Are these modifiers enabled?
+                    if modifier_node is None:
                         continue
-                    for IargK, IargV in oieIter:
+                    for inc_arg_label, inc_arg_value in sorted_match:
 
-                        if nodeCompare(IargK, IargV, enrichedModifierNode, wikiCache):
+                        if node_compare(inc_arg_label, inc_arg_value, modifier_node, wiki_cache):
                             modifiers.append(mod)
 
-                newArgs = []
-                for index, ent in enumerate(accum):
-                    if True or ent:
-                        newArgs.append(args[index])
-                    else:
-                        fv = subclaim.kb.getFreeVar()
-                        newArgs.append(fv)
+                established_arguments = []
+                for index, ent in enumerate(matched_nouns):
+                    established_arguments.append(kb_function_args[index])
 
-                pred = verbT + arity + '(' + ','.join(newArgs) + ')'
-                if predNeg:
-                    pred = '-' + pred
+                new_predicate = kb_predicate_id + function_arity + '(' + ','.join(established_arguments) + ')'
+                if negate_predicate:
+                    new_predicate = '-' + new_predicate
 
-                subclaim.kb.evidenceMap[pred] = docIn
+                subclaim.kb.evidenceMap[new_predicate] = incoming_doc
                 for mod in modifiers:
-                    pred += ' &' + mod
-                    subclaim.kb.evidenceMap[mod] = docIn
-                subclaim.kb.addToKb(pred)
-                print("NEW EVIDENCE: ", pred, "----->", docIn, " @ ", docIn._.url)
+                    new_predicate += ' &' + mod
+                    subclaim.kb.evidenceMap[mod] = incoming_doc
+                subclaim.kb.add_to_kb(new_predicate)
+                print("NEW EVIDENCE: ", new_predicate, "----->", incoming_doc, " @ ", incoming_doc._.url)
 
     return
 
-#todo give credit for this !
-def compute_similarity(doc1, doc2):
-    vector1 = np.zeros(300)
-    vector2 = np.zeros(300)
-    for token in doc1:
-        if (token.text not in STOP_WORDS):
-            vector1 = vector1 + token.vector
-    vector1 = np.divide(vector1, len(doc1))
-    for token in doc2:
-        if (token.text not in STOP_WORDS):
-            vector2 = vector2 + token.vector
-    vector2 = np.divide(vector2, len(doc2))
-    return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
+
+# Compute similarity between two spans by cosine distance, ignoring stop words.
+def compute_similarity(span1, span2):
+    span1_vecs = np.array([tok.vector for tok in span1 if tok.text not in STOP_WORDS])
+    span2_vecs = np.array([tok.vector for tok in span2 if tok.text not in STOP_WORDS])
+    if not span1_vecs.size or not span2_vecs.size:
+        return 0.0
+    else:
+        span1_vecs_mean = span1_vecs.mean(axis=0)
+        span2_vecs_mean = span2_vecs.mean(axis=0)
+        denom = np.linalg.norm(span1_vecs_mean) * np.linalg.norm(span2_vecs_mean)
+        if denom == 0.0:
+            return False
+        else:
+            return np.dot(span1_vecs_mean, span2_vecs_mean) / denom
 
 
-# Takes ALL existing nodes (before looking at all their UVis), and ALL incoming oies (ditto), and look for any uvi matches.
+# todo
+# Takes ALL existing nodes (before looking at all their UVis), and ALL incoming oies (ditto), and look for  uvi matches.
 # Returns pairs of (ID of existing node that matches uvi, incoming OIE which matched it)
-def uviMatch(existing, incoming, incomingUviMap):
-    oieMatches = []
+def verb_match(existing, incoming, uvi_map):
+    from nltk.corpus import sentiwordnet as sn
+    path_matches = []
+    senti_matches = {}
     for jk, j in incoming.items():
-        jm = pb2wn.get(incomingUviMap[jk], None)
+        jm = propbank_to_wordnet.get(uvi_map[jk], None)
         if jm is not None:
             for jmm in jm:
                 try:
@@ -271,7 +293,7 @@ def uviMatch(existing, incoming, incomingUviMap):
                 except WordNetError:
                     continue
                 for i in existing:
-                    im = pb2wn.get(i.uvi, None)
+                    im = propbank_to_wordnet.get(i.uvi, None)
                     if im is not None:
                         for imm in im:
                             try:
@@ -279,32 +301,38 @@ def uviMatch(existing, incoming, incomingUviMap):
                             except WordNetError:
                                 continue
                             sim = (wn.path_similarity(wni, wnj))
-                            if sim > 0.5 and (i.ID, j) not in oieMatches:
-                                oieMatches.append((i.ID, j))
+                            if sim > 0.5:
+                                if (i.ID, j) not in path_matches:
+                                    path_matches.append((i.ID, j))
+
+                            else:
+                                isent = sn.senti_synset(imm)
+                                jsent = sn.senti_synset(jmm)
+                                if ((any(x in imm for x in ['do.v', 'be.v', 'have.v']) or (
+                                        isent.pos_score() > 0.3 and not isent.neg_score()))
+                                        and (any(x in jmm for x in ['do.v', 'be.v', 'have.v']) or (
+                                                jsent.pos_score() > 0.3 and not jsent.neg_score()))):
+                                    if i.ID in senti_matches:
+                                        if j not in senti_matches[i.ID]:
+                                            senti_matches[i.ID].append(j)
+                                    else:
+                                        senti_matches[i.ID] = [j]
+    return list(path_matches), senti_matches
 
 
-    return list(oieMatches)
-
-#Preprocess input docs
-def receiveDoc(sources, docText):
+# Preprocess input docs
+def receive_doc(sources, doc_text):
     sentences = []
     for source in sources:
         url = source[0]
-        #Filter out non-printable characters.
-        s2 = ''.join(filter(lambda x: x in printable and x not in ['{', '}'], source[1]))
-        if len(s2) < 5:
+        # Filter out non-printable characters.
+        cleansed_sent = ''.join(filter(lambda x: x in printable and x not in ['{', '}'], source[1]))
+        if len(cleansed_sent) < 5:
             continue
-        #Sentencize to split doc up and allow for granular filtering, remove extra long sentences.
-        doc = nlp(s2)
+        # Sentencize to split doc up and allow for granular filtering, remove extra long sentences.
+        doc = nlp_sentencise_only(cleansed_sent)
         for sent in doc.sents:
-            if len(sent) < 150 and sent.text.lower() not in docText.text.lower():
+            if len(sent) < 150 and sent.text.lower() not in doc_text.text.lower():
                 sentences.append((url, sent.text.replace("\n", "")))
 
-    #Rejoin sentences into pairs as to promote anaphora resolving more often.
-    newSents = []
-    while len(sentences) % 2 != 0:
-        sentences.append('')
-    for i in range(0, len(sentences) - 2, 2):
-        newSents.append((sentences[i][0], sentences[i][1] + ' ' + sentences[i + 1][1]))
-
-    return newSents
+    return sentences

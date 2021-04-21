@@ -14,7 +14,8 @@ AGENT = tokens.AGENT
 
 
 # Import cache file containing searches and documents, specify which search engine/config to use.
-CACHE_FILE = 'data/SearchCache19.pickle'
+CACHE_FILE_SEARCH = 'data/SearchingCache.pickle'
+CACHE_FILE_ARTICLE = 'data/ArticleCache.pickle'
 SELECTED_SEARCH = tokens.SEARCH
 EVIDENCE_BATCH_SIZE = 5
 FULL_OPEN_SEARCH_CONFIG = 'c43aa9a7-40ee-4261-8ead-124b5a0ddcbc&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE)
@@ -22,12 +23,19 @@ OPEN_SEARCH_CONFIG = '4f2142cb-2875-478f-b6a1-da7beabdec7b&mkt=en-GB&count=' + s
 CLOSED_SEARCH_CONFIG = '506c5964-cf72-4d1e-a06d-655cc3d3989e&mkt=en-GB&count=1'
 
 
-if not os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, 'wb') as cache:
+if not os.path.exists(CACHE_FILE_SEARCH):
+    with open(CACHE_FILE_SEARCH, 'wb') as cache:
         pickle.dump({}, cache)
-with open(CACHE_FILE, 'rb') as cache:
-    web_cache = pickle.load(cache)
+with open(CACHE_FILE_SEARCH, 'rb') as cache:
+    search_cache = pickle.load(cache)
     print("Web Cache loaded")
+
+if not os.path.exists(CACHE_FILE_ARTICLE):
+    with open(CACHE_FILE_ARTICLE, 'wb') as cache:
+        pickle.dump({}, cache)
+with open(CACHE_FILE_ARTICLE, 'rb') as cache:
+    article_cache = pickle.load(cache)
+    print("Article Cache loaded")
 
 
 # Define various Search functions:
@@ -50,9 +58,7 @@ def bing_s1(term):
 def search_parse(term, key, config):
     tk=term.replace(" ","%20")
     url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={tk}&customconfig={config}"
-    print(url)
     data_in = requests.get(url, headers={"Ocp-Apim-Subscription-key": key})
-    print(data_in.json())
     vals = data_in.json().get('webPages', {}).get('value', {})
     return [] if not vals else list(i['url'] for i in vals)
 
@@ -63,15 +69,15 @@ search_opts = {'bingFree': bing_free, 'bingS1': bing_s1, 'pfOnly': politifact_on
 
 # Trigger a search, first checking if the term has been sought from the cache.
 def search_fetch(term):
-    if term in web_cache:
+    if term in search_cache:
         print("Cache Hit: ", term)
-        return web_cache[term]
+        return search_cache[term]
     else:
         print("Cache miss ", term)
         search_funct = search_opts[SELECTED_SEARCH]
         res = search_funct(term)
         print("Writing to cache -", res, "-")
-        web_cache[term] = res
+        search_cache[term] = res
         return res
 
 
@@ -89,8 +95,8 @@ def nlp_feed(term):
             continue
 
         # Scrape requested URLs if they aren't currently in cache.
-        if url in web_cache:
-            wc = web_cache[url]
+        if url in article_cache:
+            wc = article_cache[url]
             if wc != '':
                 sources.add((url, wc))
                 print("Cache Hit on ", url[:max(len(url), 50)], "......")
@@ -104,8 +110,8 @@ def nlp_feed(term):
                     soup = BeautifulSoup(article.content, 'html.parser')
                     body = ' '.join(z.text for z in soup.findAll('p'))
                     sources.add((url, body))
-                    if body not in web_cache:
-                        web_cache[url] = body
+                    if body not in article_cache:
+                        article_cache[url] = body
                         fresh_cache = False
 
                 else:
@@ -113,13 +119,13 @@ def nlp_feed(term):
                     article.download()
                     article.parse()
                     sources.add((url, article.text))
-                    if article.text not in web_cache:
-                        web_cache[url] = article.text
+                    if article.text not in article_cache:
+                        article_cache[url] = article.text
                         fresh_cache = False
 
             except ArticleException:
                 print("Couldn't fetch: ", url)
-                web_cache[url] = ''
+                article_cache[url] = ''
                 fresh_cache = False
 
     # Only dump to disk if cache has been modified
@@ -131,8 +137,10 @@ def nlp_feed(term):
 # Dumps cache to disk. Note that dumping the cache does not entail reloading it, however assuming one user at a time
 # them ephemeral cache will always be up to date with disk cache, once written here.
 def dump_to_disk():
-    with open(CACHE_FILE, 'wb') as cache_file:
-        pickle.dump(web_cache, cache_file)
+    with open(CACHE_FILE_ARTICLE, 'wb') as cache_file:
+        pickle.dump(article_cache, cache_file)
+    with open(CACHE_FILE_SEARCH, 'wb') as cache_file:
+        pickle.dump(search_cache, cache_file)
 
 
 # Utility code for managing cache.
@@ -141,20 +149,19 @@ if __name__ == "__main__":
         "Cache management. Enter 'clear' to clear URL cache, 'inspect' to view it, "
         "'create' to re-form the trusted source list, or 'exit'.")
     if resp == 'inspect':
-        with open(CACHE_FILE, 'rb') as cache:
+        with open(CACHE_FILE_ARTICLE, 'rb') as cache:
+            kd = (pickle.load(cache))
+            print(kd.keys())
+        with open(CACHE_FILE_SEARCH, 'rb') as cache:
             kd = (pickle.load(cache))
             print(kd.keys())
     elif resp == 'clear':
-        with open(CACHE_FILE, 'wb') as cache:
+        with open(CACHE_FILE_ARTICLE, 'wb') as cache:
             pickle.dump({}, cache)
         print("Cache cleared")
-    elif resp == 'partial':
-        k = input("name: ")
-        with open(CACHE_FILE, 'rb') as cache:
+        with open(CACHE_FILE_SEARCH, 'rb') as cache:
             kd = (pickle.load(cache))
-            kd.pop(k)
-        with open(CACHE_FILE, 'wb') as cache:
-            pickle.dump(kd, cache)
+            print(kd.keys())
     elif resp == 'create':
         import json
         import csv

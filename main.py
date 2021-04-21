@@ -34,7 +34,8 @@ def politihop_input(data):
             else:
                 statement = author + " s" + statement[1:]
 
-        statement_set.add(statement)
+        if statement:
+            statement_set.add(statement)
         truth_dict[statement] = politiDict[truth]
     return statement_set, truth_dict
 
@@ -78,7 +79,7 @@ def process_claim(doc, truth_dict, limiter):
     for subclaim in top_level_claim.subclaims:
 
         # Obtain search terms from processed subclaims
-        query, noun_ch, entities = subclaim.kb.prepSearch()
+        query, noun_ch, entities = subclaim.kb.prep_search()
 
         # Collect evidence from webcrawler, modified by evidence domain limiter as appropriate.
         sources = []
@@ -89,7 +90,7 @@ def process_claim(doc, truth_dict, limiter):
 
 
         # Process collected evidence into knowledge base.
-        evidence.processEvidence(subclaim, noun_ch, entities, sources)
+        evidence.process_evidence(subclaim, noun_ch, entities, sources)
 
         # Attempt proof
         result, sub_claim_evidence = subclaim.kb.prove()
@@ -111,7 +112,7 @@ def process_claim(doc, truth_dict, limiter):
         return [5, truth_dict[doc.text], []]
 
 
-def main(name='politihop', data='Politihop_test.tsv', limiter=None):
+def main(name='politihop', data='politihop_train.tsv', limiter=None):
     results = []
     # Read in statements & associated Ground truth
     statement_set, truth_dict = DATA_IMPORT[name](data)

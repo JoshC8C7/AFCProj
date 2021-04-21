@@ -6,7 +6,7 @@ from transformer_srl import dataset_readers, models, predictors
 import neuralcoref
 import Levenshtein
 
-# This is a module rather than a class to enforce singleton behaviour of the models. The nlp model is used across the
+# This is a module rather than a class to enforce singleton behaviour of the models. The nlp_sentencise_only model is used across the
 # files and so should be accessible from each module rather than through a single object.
 
 # Higher improves speeds, too high and PyTorch will throw an error.

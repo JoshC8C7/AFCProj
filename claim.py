@@ -1,7 +1,7 @@
 from graphviz import Digraph
 import networkx as nx
 from pydot import graph_from_dot_data
-from logic import KnowledgeBaseHolder, getSpanCoref
+from logic import KnowledgeBaseHolder, get_span_coref
 
 # Read-in semantically weak adverbs to exclude from conjunctions
 with open('adverbStop.txt', 'r') as stopRead:
@@ -166,7 +166,7 @@ class DocClaim:
                     # being co-dependent e.g. 'My son is 11. He likes to eat cake.' - the coreference bridges the two
                     # otherwise separate components when there should be no co-dependence implied. Both are about the
                     # son, but there is not an iff relation between them.
-                    arg_corefs = getSpanCoref(argV)
+                    arg_corefs = get_span_coref(argV)
                     if output and len(arg_corefs):
                         for cluster in arg_corefs:
                             canonical_reference = cluster.main
