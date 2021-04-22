@@ -8,20 +8,19 @@ import os
 # Tokens and user-agent string are stored in tokens.py (omitted from Git for security).
 import tokens
 
-BING_FREE_KEY = tokens.BING_FREE_KEY
-BING_S1_KEY = tokens.BING_S1_KEY
+BING_KEY = tokens.BING_S1_KEY
+GOOGLE_API_KEY = tokens.GOOGLE_API_KEY
 AGENT = tokens.AGENT
 
 
 # Import cache file containing searches and documents, specify which search engine/config to use.
 CACHE_FILE_SEARCH = 'data/SearchingCache.pickle'
 CACHE_FILE_ARTICLE = 'data/ArticleCache.pickle'
+LIMITED_CACHE = 'data/LimitedCache.pickle'
 SELECTED_SEARCH = tokens.SEARCH
 EVIDENCE_BATCH_SIZE = 5
-FULL_OPEN_SEARCH_CONFIG = 'c43aa9a7-40ee-4261-8ead-124b5a0ddcbc&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE)
 OPEN_SEARCH_CONFIG = '4f2142cb-2875-478f-b6a1-da7beabdec7b&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE) #AFC-Limited @ Bing
-CLOSED_SEARCH_CONFIG = '506c5964-cf72-4d1e-a06d-655cc3d3989e&mkt=en-GB&count=1'
-
+GOOGLE_PF_ONLY = 'e1d9abb2728495ee9'
 
 if not os.path.exists(CACHE_FILE_SEARCH):
     with open(CACHE_FILE_SEARCH, 'wb') as cache:
@@ -37,38 +36,53 @@ with open(CACHE_FILE_ARTICLE, 'rb') as cache:
     article_cache = pickle.load(cache)
     print("Article Cache loaded")
 
+if not os.path.exists(LIMITED_CACHE):
+    with open(LIMITED_CACHE, 'wb') as cache:
+        pickle.dump({}, cache)
+with open(LIMITED_CACHE, 'rb') as cache:
+    limited_cache = pickle.load(cache)
+    print("Limited Cache loaded")
+
 
 # Define various Search functions:
 
 # Fetch data from search limited to the first politifact result (for closed-domain evaluation). There was initially
 # more pre-processing done before passing to searchParse; these functions remain for extensibility (e.g. with google).
-def politifact_only(tl_claimtext):
-    return search_parse(tl_claimtext, BING_S1_KEY, CLOSED_SEARCH_CONFIG)
+def politifact_only(term):
+    print("searching ",term)
+    url = f"https://www.googleapis.com/customsearch/v1/siterestrict?key={GOOGLE_API_KEY}&cx={GOOGLE_PF_ONLY}&q={term}&num=1"
+    data = requests.get(url).json()
+    print(data)
+    found = data.get("items")
+    return list(i['link'] for i in found)
 
 
-def bing_free(term):
-    return search_parse(term, BING_S1_KEY, OPEN_SEARCH_CONFIG)
-
-
-def bing_s1(term):
-    return search_parse(term, BING_S1_KEY, OPEN_SEARCH_CONFIG)
-
-
-# Parses from Bing searchs.
-def search_parse(term, key, config):
+def bing_restricted_domain(term,config=OPEN_SEARCH_CONFIG):
     tk=term.replace(" ","%20")
     url = f"https://api.bing.microsoft.com/v7.0/custom/search?q={tk}&customconfig={config}"
-    data_in = requests.get(url, headers={"Ocp-Apim-Subscription-key": key})
+    data_in = requests.get(url, headers={"Ocp-Apim-Subscription-key": BING_KEY})
     vals = data_in.json().get('webPages', {}).get('value', {})
     return [] if not vals else list(i['url'] for i in vals)
 
 
 # Dictionary of available search options.
-search_opts = {'bingFree': bing_free, 'bingS1': bing_s1, 'pfOnly': politifact_only}
+search_opts = {'bing': bing_restricted_domain, 'pfOnly': politifact_only}
 
 
 # Trigger a search, first checking if the term has been sought from the cache.
-def search_fetch(term):
+def search_fetch(term,limiter):
+    if limiter:
+        print("Limited Search with param: ", limiter)
+        if term in limited_cache:
+            print("Cache Hit: ", term)
+            return limited_cache[term]
+        else:
+            print("Cache miss ", term)
+            res = search_opts[limiter](term)
+            print("Writing to cache -", res, "-")
+            limited_cache[term] = res
+            return res
+
     if term in search_cache:
         print("Cache Hit: ", term)
         return search_cache[term]
@@ -82,16 +96,18 @@ def search_fetch(term):
 
 
 # Takes a term and returns parsed article text
-def nlp_feed(term):
+def nlp_feed(term,limiter=None):
     fresh_cache = True
     sources = set()
     config = Config()
     config.browser_user_agent = AGENT
-    urls = search_fetch(term)
+    urls = search_fetch(term,limiter)
+    print(urls)
     for url in urls[:1+EVIDENCE_BATCH_SIZE]:
 
         # Exclude any links (usually Associated Press ones) which are themselves fact-checks, which would be cheating...
-        if 'factcheck' in url or 'fact-check' in url:
+        #unless running on closed domain, in which case 'factcheck' is in every domain...
+        if limiter is None and 'factcheck' in url or 'fact-check' in url:
             continue
 
         # Scrape requested URLs if they aren't currently in cache.
@@ -141,6 +157,8 @@ def dump_to_disk():
         pickle.dump(article_cache, cache_file)
     with open(CACHE_FILE_SEARCH, 'wb') as cache_file:
         pickle.dump(search_cache, cache_file)
+    with open(LIMITED_CACHE, 'wb') as cache_file:
+        pickle.dump(limited_cache, cache_file)
 
 
 # Utility code for managing cache.

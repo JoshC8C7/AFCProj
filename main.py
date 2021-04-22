@@ -4,7 +4,7 @@ import evidence
 
 from nlpPipeline import batch_proc
 from claim import DocClaim
-from webcrawl import nlp_feed
+from web_scrape import nlp_feed
 
 # Politihop-to-standard label conversion, as in Politihop.
 politiDict = {'true': 1, 'mostly-true': 1, 'barely-true': -1, 'half-true': 0, 'mostly-false': -1, 'pants-fire': -1,
@@ -14,7 +14,7 @@ politiDict = {'true': 1, 'mostly-true': 1, 'barely-true': -1, 'half-true': 0, 'm
 # Handles input for politihop
 def politihop_input(data):
     # Read in input claims
-    df = pd.read_table(path.join("data", "Politihop", data), sep='\t')
+    df = pd.read_table(path.join("data", "Politihop", data), sep='\t').head(100)
 
     # The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     # is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -83,8 +83,8 @@ def process_claim(doc, truth_dict, limiter):
 
         # Collect evidence from webcrawler, modified by evidence domain limiter as appropriate.
         sources = []
-        if (limiter is not None and limiter == 'pfOnly') or not query:
-            sources.extend(nlp_feed(top_level_claim.doc.text))
+        if (limiter is not None) or not query:
+            sources.extend(nlp_feed(top_level_claim.doc.text,limiter))
         elif query:
             sources.extend(nlp_feed(query))
 
@@ -141,4 +141,4 @@ def main(name='politihop', data='politihop_train.tsv', limiter=None):
 
 
 if __name__ == '__main__':
-    main()
+    main('politihop','politihop_train.tsv','pfOnly')
