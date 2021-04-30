@@ -163,6 +163,15 @@ def dump_to_disk():
 
 # Utility code for managing cache.
 if __name__ == "__main__":
+    import csv
+    with open(CACHE_FILE_SEARCH, 'rb') as cache:
+        kd = (pickle.load(cache))
+        with open("sourcesOut.csv",'w') as out:
+            writer = csv.writer(out)
+            writer.writerows(list(kd.values()))
+
+
+
     resp = input(
         "Cache management. Enter 'clear' to clear URL cache, 'inspect' to view it, "
         "'create' to re-form the trusted source list, or 'exit'.")

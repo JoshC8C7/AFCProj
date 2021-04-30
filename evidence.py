@@ -1,4 +1,6 @@
 from string import punctuation, printable
+
+import pylcs
 from nltk.corpus import wordnet as wn
 from nltk.corpus.reader import WordNetError
 from textacy import similarity
@@ -22,6 +24,11 @@ nlp_sentencise_only.add_pipe(nlp_sentencise_only.create_pipe("sentencizer"))
 # Read in PropBank to WordNet dictionary
 with open('data/pb2wn.json', 'r') as inFile:
     propbank_to_wordnet = json.load(inFile)
+
+def lcs(a,b):
+    a_stripped = a.text
+    b_stripped = b.text
+    return pylcs.lcs2(a_stripped,b_stripped)/(max(len(a_stripped),len(b_stripped)))
 
 
 # Compare two entities via wikidata query. Checks for any intersection between two sets of 3 entities (UIDs) returned
@@ -153,12 +160,11 @@ def coref_collect(span):
 
 # Compare two nouns on a mix of metrics.
 def node_compare(inc_node_label, inc_node_span, exst_rich_arg, wiki_cache):
-    sim = compute_similarity(inc_node_span, exst_rich_arg.span)
     # Baseline embedding similarity required, and cannot include nodes with an argument type that's dotted (excluded)
     if inc_node_label != 'V' and claim.get_edge_style(inc_node_label, inc_node_span) != 'dotted':
         icorefs, ecorefs = coref_collect(inc_node_span), coref_collect(exst_rich_arg.span)
         # If No entities in either noun, then compare if embeddings are close (by cosine similarity).
-        if not (inc_node_span.ents or exst_rich_arg.span.ents) and sim > 0.8:
+        if not (inc_node_span.ents or exst_rich_arg.span.ents) and compute_similarity(inc_node_span, exst_rich_arg.span) > 0.8:
             print(inc_node_span, "/ ", exst_rich_arg.span, "  l1")
 
             return True
@@ -166,26 +172,31 @@ def node_compare(inc_node_label, inc_node_span, exst_rich_arg, wiki_cache):
             # Check if more noun-chunks are alike than are dissimilar, based on levenshtein.
             similar_count, dissimilar_count = 0, 0
 
-            v = ((((tda.gotoh.normalized_similarity(x.root.text,y.root.text) > 0.4) and (1 > 10 * tda.monge_elkan.normalized_similarity(
-                x.text, y.text) > 0.4) and compute_similarity(x,y) > 0.3) or similarity.token_sort_ratio(x.root.text, y.root.text) > 0.7) for x in
-                 inc_node_span.noun_chunks for y in
-                 exst_rich_arg.span.noun_chunks)
-            for x in v:
-                if x:
-                    similar_count += 1
+            # Existing MUST come first here, as an incoming can provide more information than the existing, but not less.
+            # E.g. existing: the democrat lead campaign of domestic terrorism, incoming: democrats.
+            # If iterating through incoming first, democrats will match and the iteration completed with 100% matches.
+            # If iterating through existing first, democrats will match but noun of the other nouns will -> ~30%.
+            for x in exst_rich_arg.span.noun_chunks:
+                for y in inc_node_span.noun_chunks:
+                    if lcs(x.root,y.root) > 0.35 and compute_similarity(x,y) > 0.57:
+                        similar_count += 1
+                        break
                 else:
                     dissimilar_count += 1
 
             if similar_count > dissimilar_count:
                 return True
+            #NCs--------------------------/\-----------------------------/\
+            #ENTS-------------------------\/-----------------------------\/----------------------------------\/
+
+
             # If entities are present in both, require sane length and for numbers to be sufficiently similar (or the
             # comparison return True as the entities passed are not elligible), and one of levenshtein or wikidata
             # coresolution to exhibit sufficient similarity.
             cb1 = 0
             cb2 = 0
             z = (
-                num_compare(x, y) and similarity.levenshtein(x.text, y.text) > 0.7 or wikidata_compare(x, y,
-                                                                                                       wiki_cache)
+                num_compare(x, y) and lcs(x,y) > 0.39 or wikidata_compare(x, y, wiki_cache)
                 for x in
                 inc_node_span.ents + icorefs for y in set(exst_rich_arg.span.ents + ecorefs))
             for x in z:

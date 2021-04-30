@@ -130,7 +130,7 @@ class DocClaim:
         coref_nodes, coref_edges = [], []
 
         # Create the overall leaf, for which the conjunction of the root verbs will imply:
-        G.node(self.argID(self.doc[:]), self.doc.text)
+        G.node(self.argID(self.doc[:]), self.doc.text, shape='box')
 
         # Iterate through all extracted relations
         seenRoots=[]
@@ -149,7 +149,7 @@ class DocClaim:
             for arg_type, argV in claim.items():
                 if arg_type != 'V' and argV not in seenRoots:
                     # Create a node for each argument, and a link to its respective verb labelled by its arg type.
-                    G.node(self.argID(argV), argV.text + "/" + str(argV.ents) + "/" + str(list(argV.noun_chunks)))
+                    G.node(self.argID(argV), argV.text + "/" + str(argV.ents) + "/" + str(list(argV.noun_chunks)),shape='box')
                     G.edge(self.argID(argV), self.argID(root), label=arg_type.replace('-', 'x'),
                            style=get_edge_style(arg_type, argV))
                     # Replace any '-' with 'x' as '-' is a keyword for networkx, but is output by SRL.
@@ -188,7 +188,7 @@ class DocClaim:
                 if argV != parent and argV.start >= parent.start and argV.end <= parent.end and (
                         parent.end - parent.start) < (shortest_span.end - shortest_span.start):
                     shortest_span = parent
-            G.node(self.argID(shortest_span), shortest_span.text)
+            G.node(self.argID(shortest_span), shortest_span.text, shape='box')
             G.edge(self.argID(argV), self.argID(shortest_span), color='violet')
 
         # If visual output requested, then add coref edges determined earlier to a copy of the graph and return that.
@@ -196,11 +196,10 @@ class DocClaim:
         if output:
             H = G.copy()
             for node in coref_nodes:
-                H.node(node[0], node[1])
+                H.node(node[0], node[1], shape='box')
             for edge in coref_edges:
                 H.edge(edge[0], edge[1], color='green', label=edge[2])
             H.view()
-
         return G
 
     # Convert the overall graph of relations into specific subclaims. This is akin to splitting from the overall root

@@ -145,8 +145,9 @@ def tags2spans(tags, docIn):
     for index, tag in enumerate(tags):
         if open_span:
             if tag[0] in ('O', 'B') or index == len(tags) - 1:
+                end_of_span_adjustment = 1 if index == len(tags) - 1 else 0
                 # If hit an O-tagged or B-tagged token and previous arg still open, need to close it and write.
-                spans[tags[index - 1][2:]] = docIn[start:index]
+                spans[tags[index - 1][2:]] = docIn[start:index+end_of_span_adjustment]
                 # If B-tagged then would set open to False at end of previous arg, before immediately setting to open
                 # as this token marks the start of a new arg. Thus, only set open to False if token is O-tagged.
                 if tag[0] == 'O':
@@ -171,14 +172,13 @@ def tags2spans(tags, docIn):
 
     # This has to be two loops as the iterable is modified, so need it written back before changing the start index.
     # As above, but for the end of the Span.
-    # Note that spaCy defines the 'end' property as 1 + the index of the final token token of the span.
+    # Note that spaCy defines the 'end' property as 1 + the index of the final token of the span.
     for spanK, span in spans.items():
         if docIn[span.end - 1].ent_iob_ in ['I', 'B'] and span.end + 1 < len(docIn):
             j = span.end
             while docIn[j].ent_iob_ != 'O' and j != span.end:
                 j += 1
             spans[spanK] = docIn[span.start:j]
-
     return spans
 
 

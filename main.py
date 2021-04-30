@@ -141,4 +141,4 @@ def main(name='politihop', data='politihop_train.tsv', limiter=None):
 
 
 if __name__ == '__main__':
-    main('politihop','politihop_train.tsv','pfOnly')
+    main('politihop','politihop_train.tsv')
