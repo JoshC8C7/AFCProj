@@ -1,11 +1,18 @@
 from string import punctuation
 from collections import deque
-
+from nltk import Prover9, Prover9Command
 from spacy.tokens.token import Token
 from nltk.sem import Expression as Expr
-from nltk.inference.resolution import *
-
+import tokens
 import claim
+import evidence
+
+#Setup prover9 interface (singleton)
+prover = Prover9()
+
+#NLTK interface doesn't work well with Windows, so specify binary locations directly.
+Prover9._prover9_bin = tokens.PROVER9_PATH
+Prover9._prooftrans_bin = tokens.PROVER9_TRANSF_PATH
 
 
 def get_span_coref(span):
@@ -24,6 +31,7 @@ class KnowledgeBaseHolder:
     c = Expr.fromstring('argF(root)')
 
     def __init__(self, claim_in, roots, doc_claim):
+        self.doc_c = doc_claim
         self.claimG = claim_in
         self.roots = roots
         self.argBaseC = doc_claim.argBaseC  # argBaseC stores association between span and ID
@@ -33,6 +41,7 @@ class KnowledgeBaseHolder:
         self.argFunc = doc_claim.argID
         self.kb_rules_only = []  # A subset of the knowledge base containing ONLY rules.
         self.kb_rules_only_to_args = {}  # A map between the rules in kb_rules_only and their associated args
+        self.kb_leaf_args_to_formula = {}
         self.ruleLength = 0  # Number of rules in the KB - so evidence backtracking knows how far to go.
         self.evidenceMap = {}  # Associates evidence with Span (as they bypass argbaseC)
         self.graph2rules()  # Populate the above on init
@@ -92,7 +101,7 @@ class KnowledgeBaseHolder:
             return 'coreInterior'
         if edge[2].get('label', '') in self.core:
             return 'core'
-        if edge[2].get('label', 'SKIP') not in self.core + self.other:
+        if edge[2].get('label', 'SKIP') not in self.core + self.other and edge[2].get('style','') != 'dotted':
             if edge[2].get('label', 'SKIP') == 'ARGM-NEG':
                 return 'neg'
             else:
@@ -112,7 +121,6 @@ class KnowledgeBaseHolder:
             print("No predicate found, KB adding aborted")
             return
         else:
-            print("Adding to KB ", text)
             existing = list(str(x) for x in self.kb)
             exp = Expr.fromstring(text)
             if text not in existing:
@@ -122,18 +130,6 @@ class KnowledgeBaseHolder:
     def graph2rules(self):
         # Keep track of seen nodes as to avoid cycles.
         seen = set()
-        # Starting at 'root' verb(s), it being fulfilled means it implies argF(root) - conjuncted with any other root
-        # verbs in the subgraph. 'make(IG_report, clear_that) -> argF(root)'
-
-        # To check if its fulfilled, check all in-edges.
-        # 1. The edge is to a simple arg leaf - it then becomes part of the parent verb i.e. sells(Tesco,____)
-        # 2. The edge is to an arg that is established by a tree - this is placed as fulfilling the correct argument
-        # e.g.-> sells(a1,makes_clear_that_impeachment))
-        # 2b. Case 2 applies to multiple edges - multiple gaps left e.g. sells(x,y).
-        # 3. Multiple verbs required to establish 1 arg (i.e. 2+ purple edges), the below verb is implied by conjunction
-        # of parent verbs. 'when(launch(fbi, investigation),tuesday) & sell(ducks,children) -> make(x, clear_that) '
-        # FOR MODIFIERS - form a new term wrapping the verb in them e.g. starting with launch(fbi, investigation)
-        # if it happened on tuesday, we add '& when(launch(fbi,investigation), tuesday))'
         if len(self.roots) == 0:
             return
         # Create the root implication as the conjunction of the verbs that feed into the root.
@@ -147,11 +143,43 @@ class KnowledgeBaseHolder:
     # So to establish an argument which has incoming edges, we must establish all incoming edges.
     def conj_establish(self, roots_in, seen):
         filtered_roots = (y for y in roots_in if len(self.claimG.in_edges(nbunch=y)) > 0)
-        k = list(filtered_roots)
-        inc = list((self.establish_rule(x, seen) for x in k))
-        inc2 = list(x for x in inc if '()' not in x)
-        self.kb_rules_only.extend(inc2)
-        return " & ".join(inc2)
+        inc = list((x, self.establish_rule(x, seen)) for x in filtered_roots)
+        inc2 = list(x for x in inc if '()' not in x[1])
+        for node, node_rule in inc2:
+            interiors = list(x for x in self.claimG.in_edges(nbunch=node, data=True) if x[0] in node_rule)
+            filtered_interiors = list(map(self.mod_or_core, interiors))
+            if 'coreInterior' in filtered_interiors:
+                odls = node_rule.split(" &")[0]
+                mini_arglist = []
+                mini_leaf_only = []
+                root = node_rule.split('(')[0]
+
+                for index, val in enumerate(filtered_interiors):
+                    if interiors[index][0] in odls:
+                        if val == 'coreInterior':
+                            mini_arglist.append(root + "ARG" + str(index))
+                        else:
+                            mini_arglist.append(interiors[index][0])
+                            mini_leaf_only.append(interiors[index][0])
+                new_arg = root + "(" + ",".join(mini_arglist) + ")"
+
+                print("NEWARG", new_arg)
+                if 'core' not in filtered_interiors:
+                    #if up_val is entirely interior args (e.g. asked(asked1,asked2)):
+                    # add asked(asked1,asked2) to the kb but nothing else
+                        self.add_to_kb(new_arg)
+
+                else:
+                    # if up_val has at least 1 interior but not all interior (e.g. asked(asked1, asked2, bolton))
+                    # add asked(bolton) to self.kb_rules_only, then if seeing evidence asked(bolton) then add asked(asked1, asked2, bolton) to the kb.
+                    miniargleaf = root + "(" + ",".join(mini_leaf_only)+")"
+                    print("MINILEAFARG: ", miniargleaf)
+                    self.kb_leaf_args_to_formula[miniargleaf] = new_arg
+                    self.kb_rules_only.append(miniargleaf)
+
+        rules_only = list(x[1] for x in inc2)
+        self.kb_rules_only.extend(rules_only)
+        return " & ".join(rules_only)
 
     # Take a node and establish it as a predicate function, with its arguments being the verb (node)'s arguments.
     def establish_rule(self, root, seen):
@@ -185,17 +213,7 @@ class KnowledgeBaseHolder:
 
                 # Conjestablish over all incoming violet edges (although usually is just 1)
                 up_val = self.conj_establish(list(x[0] for x in (self.claimG.in_edges(nbunch=edge[0]))), seen)
-
-                # Fill in all bar the (count)th arguments with free variables:
-                mini_arg_list = []
-                free_var = self.get_free_var()
-                for i in range(0, len(list(x for x in incoming_edges if 'ARGM' not in x[2].get('label', '')))):
-                    if i == count:
-                        mini_arg_list.append((edge[0]))
-                    else:
-                        mini_arg_list.append(free_var + str(i))
-                implied_arg = root + str(len(mini_arg_list)) + '(' + ",".join(mini_arg_list) + ")"
-                self.kb_rules_only.append(implied_arg)
+                implied_arg = root+str(len(arg_list))+"ARG"+str(count)+" = "+edge[0]
                 if up_val:
                     self.add_to_kb(up_val + ' -> ' + implied_arg)
 
@@ -243,7 +261,6 @@ class KnowledgeBaseHolder:
             self.argBaseC[arg].enable_node()
 
         if negate_predicate:
-            print("predneg")
             predicate = '-' + predicate
 
         # Add the predicates
@@ -260,71 +277,68 @@ class KnowledgeBaseHolder:
     def prove(self):
         if len(self.kb) == self.ruleLength:
             return False, []
-        evidence = []
+        ev_docs = []
+        for index, x in enumerate(self.kb):
+            print(index, ":", x)
         print("Attempting proof...")
-        from pprint import pprint
-        pprint(self.kb)
-
-        # Set up NLTK resolution-based prover.
-        rpc = ResolutionProverCommand(goal=self.c, assumptions=self.kb)
-
-        from func_timeout import func_timeout, FunctionTimedOut
-
-        try:
-            p1 = func_timeout(60, rpc.prove, args=(True,))
-        except FunctionTimedOut:
-            print("Timed out...")
-            p1 = False
-
-
+        prover9_prover = Prover9Command(goal=Expr.fromstring('argF(root)'), assumptions=self.kb, prover=prover)
+        p1 = prover9_prover.prove(verbose=True)
         if p1:
+            prf= prover9_prover.proof()
+            print(prf)
+            if 'argF(root)' not in prf:
+                return False, []
             # Parse unhelpful text output format
-            prf = rpc.proof().replace(" ", "").split("\n")
-            prf_parsed = []
-            for x in prf:
-                if '{}' in x:
-                    try:
-                        y = x.split('}')[1].replace('(', '').replace(')', '').split(',')
-                        prf_parsed.append((int(y[0]), int(y[1])))
-                    except IndexError:
-                        continue  # in the rare case that argF{} is read as an input and overrides.
-                elif x:
-                    y = x.split('{')[1].split('}')
-                    if y[1] == 'A':
-                        prf_parsed.append(y[0])
+            prf_lines = prf.split("% Given clauses")[1]
+            prf_lines_2 = list(x for x in prf_lines.split(".") if '[' in x)
+            prf_lines_3 = list(x for x in prf_lines.split("\n") if '[' in x)
+            evtrip = {}
+            final = 0
+            for index, x in enumerate(prf_lines_3):
+                next_hop = prf_lines_2[index]
+                if '(' in next_hop:
+                    next_hop = next_hop.split('(')[1].split(')')[0]
+                    if ',' in next_hop:
+                        next_hop = list(int(x) for x in next_hop.split(',') if x.isnumeric())
                     else:
-                        ysplit = y[1].replace(')', '').replace('(', '').split(',')
-                        prf_parsed.append((int(ysplit[0]), int(ysplit[1])))
+                        next_hop = [int(next_hop)]
+                else:
+                    next_hop = []
+
+                split2 = x.split(".")[0].split(" ")
+                evtrip[int(split2[0])] = (" ".join(split2[1:]),next_hop)
+                if index == len(prf_lines_3)-1:
+                    final = int(split2[0])
 
             # Obtain proof from backtracker
-            path = backtracker(prf_parsed, self.ruleLength)
+            path = backtracker(evtrip, final)
+
 
             # Write proof derivation
             for index, i in enumerate(path):
                 if 0 < index < len(path) - 1:
-                    print("-->--", end="")
+                    ev_docs.append("-->--")
                 if type(i) is not tuple:
-                    print(self.evidenceMap[i], " @ ", self.evidenceMap[i]._.url, end='')
-                    evidence.append(self.evidenceMap[i]._.url)
-            print()
-            print("retev")
-            return p1, evidence
+                    if i in self.evidenceMap:
+                        best = max(enumerate(self.evidenceMap[i]), key=lambda x: evidence.lcs(x[1][1],self.doc_c.doc))[1][1]
+                        ev_docs.append(best.text + " @ " + best._.url)
+            return p1, ev_docs
         else:
             return p1, []
 
 
 # Backtrack through derivation to extract the proof, using ruleLength to determine when 'leaves' are reached.
-def backtracker(prf, rl):
+def backtracker(prf, start):
     path = []
-    queue = deque(prf[-1])
+    queue = deque([start])
     while len(queue):
-        k = queue.popleft() - 1
-        step = prf[k]
-        if k <= rl:
-            print("", end='')
-        else:
-            path.append(step)
-        if type(step) is tuple:
+        k = queue.popleft()
+        step = prf[k][1]
+        if step:
             queue.extend(step)
+        else:
+            if prf[k][0] not in path and not any(x in prf[k][0] for x in ['argF(root)',"=","->"]):
+                split_clauses = list(x for x in prf[k][0].split(" ") if len(x) > 2)
+                path.extend(split_clauses)
     path.reverse()
     return path

@@ -1,6 +1,7 @@
 import pandas as pd
 from os import path
 import evidence
+import csv
 
 from nlpPipeline import batch_proc
 from claim import DocClaim
@@ -8,13 +9,13 @@ from web_scrape import nlp_feed
 
 # Politihop-to-standard label conversion, as in Politihop.
 politiDict = {'true': 1, 'mostly-true': 1, 'barely-true': -1, 'half-true': 0, 'mostly-false': -1, 'pants-fire': -1,
-              'false': -1}
+              'false': -1, 'T': 1, 'F': -1}
 
 
 # Handles input for politihop
 def politihop_input(data):
     # Read in input claims
-    df = pd.read_table(path.join("data", "Politihop", data), sep='\t').head(100)
+    df = pd.read_table(path.join("data", "Politihop", data), sep='\t')
 
     # The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     # is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -36,13 +37,14 @@ def politihop_input(data):
 
         if statement:
             statement_set.add(statement)
-        truth_dict[statement] = politiDict[truth]
+            truth_dict[statement] = politiDict[truth]
+
     return statement_set, truth_dict
 
 
-def liar_input(data):
+def fnn_input(data):
     # Read in input claims
-    df = pd.read_table(path.join("data", "liarliar", data), sep='\t').head(200)
+    df = pd.read_table(path.join("data", "fakenewsnet", "preproc", data), sep=',')
 
     # The input claims data has multiple repetitions of each text due to containing multiple verifiable claims. This
     # is handled later so for now the text must be de-duplicated. Other text pre-processing/cleansing occurs here.
@@ -50,7 +52,8 @@ def liar_input(data):
     truth_dict = {}
     for i, row in df.iterrows():
         statement = row[2]
-        truth = row[1]
+        statement = statement.encode('ascii', 'ignore').decode()
+        truth = row[3]
         while not statement[0].isalpha() or statement[0] == " ":
             statement = statement[1:]
         if statement.partition(" ")[0].lower() == "says":
@@ -62,7 +65,7 @@ def liar_input(data):
 
 
 # Change which dataset to import
-DATA_IMPORT = {'politihop': politihop_input, 'liarliar': liar_input}
+DATA_IMPORT = {'politihop': politihop_input, 'fnn': fnn_input}
 
 
 # Run inference on a single claim
@@ -109,7 +112,7 @@ def process_claim(doc, truth_dict, limiter):
         print("Guessed Truth:", str(proportion), "  Ground Truth:", truth_dict[doc.text])
         return [proportion, truth_dict[doc.text], claim_ev]
     else:
-        return [5, truth_dict[doc.text], []]
+        return [-1, truth_dict[doc.text], []]
 
 
 def main(name='politihop', data='politihop_train.tsv', limiter=None):
@@ -125,12 +128,12 @@ def main(name='politihop', data='politihop_train.tsv', limiter=None):
     for index, doc in enumerate(docs):
         print("Processing Doc: ", index+1, " of ", length)
         res = process_claim(doc, truth_dict, limiter)
-        print(res)
-        results.append([doc, res[0], res[1], res[2]])
+        evlist = []
+        for ev in enumerate(res[2]):
+            evlist.append(str(ev[0]) + ": " + ",".join(ev[1]))
+        results.append([doc, res[0], res[1], evlist])
 
     # Return final results
-    print(results)
-    import csv
     # opening the csv file in 'w+' mode
     file = open('output.csv', 'w+', newline='')
 
@@ -141,4 +144,4 @@ def main(name='politihop', data='politihop_train.tsv', limiter=None):
 
 
 if __name__ == '__main__':
-    main('politihop','politihop_train.tsv')
+    main(name='politihop',data='politihop_train.tsv', limiter='pfOnly')

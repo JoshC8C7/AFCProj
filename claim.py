@@ -38,7 +38,7 @@ def arg_id_gen(argV, debug=True):
         k = (str(argV.start) + "X" + str(argV.end) + "X" + (
             argV.text.replace("\"", "").replace(":", "")))  # Sanitize for graph
         j = ''.join(filter(str.isalnum, str(k))).replace(' ', '')  # Pre-emptively sanitize for KB also
-        return 'a' + j
+        return 'a' + j #+ str(hash(argV.text)).replace("-", "a")
     else:  # Otherwise just use a hash
         return 'a' + str(argV.start) + "X" + str(argV.end) + "X" + str(hash(argV.text)).replace("-", "a")
 

@@ -3,7 +3,6 @@ from string import punctuation, printable
 import pylcs
 from nltk.corpus import wordnet as wn
 from nltk.corpus.reader import WordNetError
-from textacy import similarity
 from word2number.w2n import word_to_num as w2n
 import re
 import claim
@@ -145,8 +144,7 @@ def process_evidence(subclaim, ncs, entities, sources):
                         else:
                             uvi_matched_srls[rich_arg_node] = [p[1]]
             # If any verb matches are found, attempt to resolve nouns.
-            noun_match(uvi_matched_srls, subclaim, doc, wiki_cache, sentiment_matches)
-
+            arg_compare(uvi_matched_srls, subclaim, doc, wiki_cache, sentiment_matches)
     return verb_matched_relations
 
 
@@ -164,9 +162,7 @@ def node_compare(inc_node_label, inc_node_span, exst_rich_arg, wiki_cache):
     if inc_node_label != 'V' and claim.get_edge_style(inc_node_label, inc_node_span) != 'dotted':
         icorefs, ecorefs = coref_collect(inc_node_span), coref_collect(exst_rich_arg.span)
         # If No entities in either noun, then compare if embeddings are close (by cosine similarity).
-        if not (inc_node_span.ents or exst_rich_arg.span.ents) and compute_similarity(inc_node_span, exst_rich_arg.span) > 0.8:
-            print(inc_node_span, "/ ", exst_rich_arg.span, "  l1")
-
+        if (lcs(inc_node_span, exst_rich_arg.span) > 0.7 and tda.overlap.normalized_similarity(inc_node_span.text, exst_rich_arg.span.text) > 0.8) or ((not (inc_node_span.ents or exst_rich_arg.span.ents)) and compute_similarity(inc_node_span, exst_rich_arg.span) > 0.8):
             return True
         else:
             # Check if more noun-chunks are alike than are dissimilar, based on levenshtein.
@@ -186,44 +182,40 @@ def node_compare(inc_node_label, inc_node_span, exst_rich_arg, wiki_cache):
 
             if similar_count > dissimilar_count:
                 return True
-            #NCs--------------------------/\-----------------------------/\
-            #ENTS-------------------------\/-----------------------------\/----------------------------------\/
-
-
             # If entities are present in both, require sane length and for numbers to be sufficiently similar (or the
             # comparison return True as the entities passed are not elligible), and one of levenshtein or wikidata
             # coresolution to exhibit sufficient similarity.
-            cb1 = 0
-            cb2 = 0
-            z = (
-                num_compare(x, y) and lcs(x,y) > 0.39 or wikidata_compare(x, y, wiki_cache)
-                for x in
-                inc_node_span.ents + icorefs for y in set(exst_rich_arg.span.ents + ecorefs))
-            for x in z:
-                if x:
-                    cb1 += 1
+            similar_ents = 0
+            dissimilar_ents = 0
+            for x in set(exst_rich_arg.span.ents+ecorefs):
+                for y in inc_node_span.ents+icorefs:
+                    if num_compare(x, y) and lcs(x,y) > 0.39 or wikidata_compare(x, y, wiki_cache):
+                        similar_ents += 1
+                        break
                 else:
-                    cb2 += 1
+                    dissimilar_ents += 1
 
-            # print(inc_node_span, "/", exst_rich_arg.span, c1, "/", c2)
-            if cb1 > cb2:
+            if similar_ents > dissimilar_ents:
                 return True
 
     # If not matched on any criteria, then return False.
     return False
 
 
-def noun_match(path_matches, subclaim, incoming_doc, wiki_cache, sentiment_matches):
+def arg_compare(path_matches, subclaim, incoming_doc, wiki_cache, sentiment_matches):
+
     for kb_function in subclaim.kb.kb_rules_only:  # Iterate over KB rules
         kb_function = kb_function.replace('-', '')
         kb_function_split = kb_function.split('(')
-        kb_predicate_id, function_arity, kb_function_args = kb_function_split[0][:-1], kb_function_split[0][-1:], \
+        kb_predicate_id, kb_function_args = kb_function_split[0][:-1], \
             kb_function_split[1].split(')')[0].split(',')
+        function_arity = kb_function.count(',')+1 #The arity of the substitute being sought, will equal existing if no sub
+        existing_arity = kb_function_split[0][-1] #The arity of the function as stored in leaf-converter
         kb_predicate = subclaim.kb.get_enabled_arg_base_c().get(kb_predicate_id, None)
         combined_matches = path_matches.get(kb_predicate, []) + sentiment_matches.get(kb_predicate_id, [])
         for match in combined_matches:  # Iterate over incoming oies
             negate_predicate = False
-            matched_nouns = [False] * int(function_arity)
+            matched_nouns = [False] * function_arity
             sorted_match = list(sorted(match.items()))
             for index, existing_arg in enumerate(kb_function_args):
                 existing_span = subclaim.kb.get_enabled_arg_base_c().get(existing_arg, None)
@@ -232,12 +224,9 @@ def noun_match(path_matches, subclaim, incoming_doc, wiki_cache, sentiment_match
                     continue
                 for inc_arg_label, inc_arg_value in sorted_match:
                     if node_compare(inc_arg_label, inc_arg_value, existing_span, wiki_cache):
-                        # print(inc_node_span, "-> ", exst_rich_arg.span)
                         matched_nouns[index] = True
-                    # else:
-                    # print(inc_node_span, "-X-> ", exst_rich_arg.span)
-
-            if sum(1 for i in matched_nouns if i) / int(function_arity) >= 0.66:
+            score = sum(1 for i in matched_nouns if i)
+            if sum(1 for i in matched_nouns if i) / function_arity >= 0.66:
                 modifiers = []
                 if 'ARGM-NEG' in match:
                     negate_predicate = True
@@ -258,16 +247,27 @@ def noun_match(path_matches, subclaim, incoming_doc, wiki_cache, sentiment_match
                 for index, ent in enumerate(matched_nouns):
                     established_arguments.append(kb_function_args[index])
 
-                new_predicate = kb_predicate_id + function_arity + '(' + ','.join(established_arguments) + ')'
-                if negate_predicate:
-                    new_predicate = '-' + new_predicate
+                #Either add the corresponding interior argument, or just the normal argument if its been found.
+                new_predicate = kb_predicate_id + str(existing_arity) + '(' + ','.join(established_arguments) + ')'
 
-                subclaim.kb.evidenceMap[new_predicate] = incoming_doc
+                if new_predicate in subclaim.kb.kb_leaf_args_to_formula:
+                    mapped_predicate = subclaim.kb.kb_leaf_args_to_formula[new_predicate]
+                else:
+                    mapped_predicate = new_predicate
+
+
+                if negate_predicate and mapped_predicate not in subclaim.kb.evidenceMap:
+                    mapped_predicate = '-' + mapped_predicate
+
+                if mapped_predicate not in subclaim.kb.evidenceMap or subclaim.kb.evidenceMap[mapped_predicate][0][0] < score:
+                    subclaim.kb.evidenceMap[mapped_predicate] = [(score, incoming_doc)]
+                elif mapped_predicate in subclaim.kb.evidenceMap and subclaim.kb.evidenceMap[mapped_predicate][0][0] == score:
+                    subclaim.kb.evidenceMap[mapped_predicate].append((score, incoming_doc))
+
                 for mod in modifiers:
-                    new_predicate += ' &' + mod
-                    subclaim.kb.evidenceMap[mod] = incoming_doc
-                subclaim.kb.add_to_kb(new_predicate)
-                print("NEW EVIDENCE: ", new_predicate, "----->", incoming_doc, " @ ", incoming_doc._.url)
+                    mapped_predicate += ' & ' + mod
+                    subclaim.kb.evidenceMap[mod] = [(1, incoming_doc)]
+                subclaim.kb.add_to_kb(mapped_predicate)
 
     return
 
@@ -288,7 +288,6 @@ def compute_similarity(span1, span2):
             return np.dot(span1_vecs_mean, span2_vecs_mean) / denom
 
 
-# todo
 # Takes ALL existing nodes (before looking at all their UVis), and ALL incoming oies (ditto), and look for  uvi matches.
 # Returns pairs of (ID of existing node that matches uvi, incoming OIE which matched it)
 def verb_match(existing, incoming, uvi_map):
@@ -328,6 +327,11 @@ def verb_match(existing, incoming, uvi_map):
                                             senti_matches[i.ID].append(j)
                                     else:
                                         senti_matches[i.ID] = [j]
+                    else:
+                        if i.span.lemma_ == jk.lemma_:
+                            if (i.ID, j) not in path_matches:
+                                print("PM ", j)
+                                path_matches.append((i.ID, j))
     return list(path_matches), senti_matches
 
 

@@ -17,6 +17,7 @@ AGENT = tokens.AGENT
 CACHE_FILE_SEARCH = 'data/SearchingCache.pickle'
 CACHE_FILE_ARTICLE = 'data/ArticleCache.pickle'
 LIMITED_CACHE = 'data/LimitedCache.pickle'
+FNN_CACHE = "data/FNN.pickle"
 SELECTED_SEARCH = tokens.SEARCH
 EVIDENCE_BATCH_SIZE = 5
 OPEN_SEARCH_CONFIG = '4f2142cb-2875-478f-b6a1-da7beabdec7b&mkt=en-GB&count=' + str(EVIDENCE_BATCH_SIZE) #AFC-Limited @ Bing
@@ -44,6 +45,14 @@ with open(LIMITED_CACHE, 'rb') as cache:
     print("Limited Cache loaded")
 
 
+
+if not os.path.exists(FNN_CACHE):
+    with open(FNN_CACHE, 'wb') as cache:
+        pickle.dump({}, cache)
+with open(FNN_CACHE, 'rb') as cache:
+    fnn_cache = pickle.load(cache)
+    print("FNN Cache loaded")
+
 # Define various Search functions:
 
 # Fetch data from search limited to the first politifact result (for closed-domain evaluation). There was initially
@@ -66,12 +75,13 @@ def bing_restricted_domain(term,config=OPEN_SEARCH_CONFIG):
 
 
 # Dictionary of available search options.
-search_opts = {'bing': bing_restricted_domain, 'pfOnly': politifact_only}
+search_opts = {'bing': bing_restricted_domain, 'pfOnly': politifact_only, 'fnn': bing_restricted_domain}
 
 
 # Trigger a search, first checking if the term has been sought from the cache.
 def search_fetch(term,limiter):
-    if limiter:
+    term = term.replace('%','%25')
+    if limiter == 'pfOnly':
         print("Limited Search with param: ", limiter)
         if term in limited_cache:
             print("Cache Hit: ", term)
@@ -81,6 +91,18 @@ def search_fetch(term,limiter):
             res = search_opts[limiter](term)
             print("Writing to cache -", res, "-")
             limited_cache[term] = res
+            return res
+
+    elif limiter == 'fnn':
+        print("Limited Search with param: ", limiter)
+        if term in fnn_cache:
+            print("Cache Hit: ", term)
+            return fnn_cache[term]
+        else:
+            print("Cache miss ", term)
+            res = search_opts[limiter](term)
+            print("Writing to cache -", res, "-")
+            fnn_cache[term] = res
             return res
 
     if term in search_cache:
